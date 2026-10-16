@@ -45,7 +45,7 @@ jobs:
       - name: Package browser extensions
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force -Path extchrome, extfirefox | Out-Null
+          New-Item -ItemType Directory -Force -Path extchrome, extfirefox, Output | Out-Null
           Copy-Item extension\* extchrome\ -Recurse -Exclude manifest.firefox.json
           Copy-Item extension\* extfirefox\ -Recurse -Exclude manifest.json
           Rename-Item extfirefox\manifest.firefox.json manifest.json
