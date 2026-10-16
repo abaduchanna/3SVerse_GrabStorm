@@ -11,6 +11,8 @@ multiple parallel connections — then paused, resumed, queued and sorted into
 folders exactly the way a modern download manager should. A companion
 **browser extension** (Chrome / Edge / Brave / Firefox) hands links and
 browser downloads straight to the app, just like the classic download
+managers do — and since **v1.2.0 the Setup installs that extension into
+every installed browser automatically**, the way the classic download
 managers do.
 
 It is a clean-room alternative to proprietary download accelerators such as
@@ -21,7 +23,7 @@ from any proprietary product. TurboGrab is not affiliated with Tonec s.r.o.
 It has **no accounts, no ads, no limits and no telemetry**, and it is
 released under the MIT license.
 
-## Features (v1.0.0)
+## Features (v1.2.0)
 
 - **Multi-segment downloads** — up to **16 parallel connections** per file
   (8 by default) via HTTP `Range` requests. Servers that do not support
@@ -48,6 +50,21 @@ released under the MIT license.
   media and document types by default — configurable). The extension talks to
   a tiny localhost server built into TurboGrab (127.0.0.1 only, protected by
   a per-install token). Works with Chrome, Edge, Brave, Opera and Firefox.
+- **One-click extension auto-install (v1.2.0)** — the Setup registers the
+  extension into **every Chromium browser it detects** (Chrome, Edge, Brave,
+  Opera, Vivaldi, Yandex) plus Firefox, using per-user browser policies
+  (`HKCU\Software\Policies\...` — no admin rights, nothing outside the
+  browser's official policy system). The extension files are served from
+  this repo's own GitHub Pages (`abaduchanna.github.io/3SVerse_TurboGrab`)
+  as a signed CRX3 with a fixed extension id
+  (`ooclbgcgolihefahehfjjcmlfdlhncno`) and a Chromium `update.xml` manifest,
+  so browsers can install **and silently update** it without the Chrome Web
+  Store. Restart the browser once after installing TurboGrab and the
+  extension is there — "Installed by your administrator" is expected for
+  policy installs. Uninstalling TurboGrab removes the policies and the
+  extension. Firefox note: release-channel Firefox requires AMO-signed
+  add-ons; the policy install works on ESR/Dev/Nightly, and everywhere else
+  the extension can still be loaded manually (see below).
 - **System tray** — closing to the tray keeps every download running;
   double-click restores the window.
 - **Retry logic** — every segment is retried automatically on transient
@@ -60,30 +77,36 @@ released under the MIT license.
 ## Install (Windows 10/11)
 
 ### Setup (recommended)
-1. Download `TurboGrab_v1.0.0_Setup.exe` from the
+1. Download `TurboGrab_v1.2.0_Setup.exe` from the
    [releases page](https://github.com/abaduchanna/3SVerse_TurboGrab/releases/latest).
 2. Run it — **no administrator rights needed** (installs per-user into
    `%LOCALAPPDATA%\3SVerse\TurboGrab`).
-3. Optionally tick the desktop shortcut on the last page.
+3. Leave **Auto-install the TurboGrab extension into all installed
+   browsers** ticked (it is by default).
+4. After the install finishes, **restart your browsers once** — the
+   TurboGrab Integration extension appears automatically in Chrome, Edge,
+   Brave, Opera, Vivaldi, Yandex and (on ESR/Dev/Nightly) Firefox.
+5. Open TurboGrab > **Settings** and press **Copy token**, then open the
+   extension's **Settings** page and paste the token. Press **Test
+   connection** — it should say *Connected*.
+6. Done. Right-click any link → **TurboGrab → Download link with
+   TurboGrab**, or let the extension take over downloads automatically
+   (toggle in the extension popup).
 
 ### Portable
 Unzip `TurboGrab_Portable.zip` anywhere and run `TurboGrab.exe`.
 
-### Browser extension (optional, v1.1.0+)
-1. Download `TurboGrab_Extension_Chrome.zip` (Chrome, Edge, Brave, Opera) or
-   `TurboGrab_Extension_Firefox.zip` (Firefox) from the releases page.
+### Manual extension install (if you unticked auto-install, or use Firefox)
+1. `TurboGrab_Extension_Chrome.zip` (Chrome, Edge, Brave, Opera) or
+   `TurboGrab_Extension_Firefox.zip` (Firefox) from the releases page (also
+   bundled into `%LOCALAPPDATA%\3SVerse\TurboGrab\extensions` by the Setup).
 2. Unzip it to a folder you keep around.
 3. **Chrome/Edge/Brave:** open `chrome://extensions`, enable **Developer
    mode**, click **Load unpacked** and select the unzipped folder.
    **Firefox:** open `about:debugging#/runtime/this-firefox`, click
-   **Load Temporary Add-on** and pick `manifest.json`, or install it through
-   `about:addons` (gear icon > Install Add-on From File after unzipping).
-4. Open TurboGrab > **Settings** and press **Copy token**, then open the
-   extension's **Settings** page and paste the token. Press **Test
-   connection** — it should say *Connected*.
-5. Done. Right-click any link → **TurboGrab → Download link with
-   TurboGrab**, or let the extension take over downloads automatically
-   (toggle in the extension popup).
+   **Load Temporary Add-on** and pick `manifest.json` (temporary), or on
+   ESR/Dev/Nightly use `about:addons` > gear icon > **Install Add-on From
+   File** for a permanent install.
 
 ## Usage
 
