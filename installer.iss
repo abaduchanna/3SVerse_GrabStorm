@@ -1,11 +1,11 @@
-; GrabStorm v1.0.0 — 3SVerse multi-segment download accelerator for Windows
+; GrabStorm v1.1.0 — 3SVerse multi-segment download accelerator for Windows
 ; Per-user installer (no admin). Auto-installs the GrabStorm Integration
 ; browser extension into every installed Chromium browser + Firefox via
 ; per-user policies, registers the grabstorm:// protocol, and writes a
 ; diagnostic log to %LOCALAPPDATA%\3SVerse\GrabStorm\install.log
 
 #define AppName "GrabStorm"
-#define AppVer "1.0.0"
+#define AppVer "1.1.0"
 #define ExtId "ooclbgcgolihefahehfjjcmlfdlhncno"
 #define ExtUpdateUrl "https://abaduchanna.github.io/3SVerse_TurboGrab/update.xml"
 #define ExtSources "https://abaduchanna.github.io/*"

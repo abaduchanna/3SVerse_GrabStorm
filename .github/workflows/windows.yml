@@ -35,7 +35,7 @@ jobs:
       - name: Compile GrabStorm.exe
         shell: pwsh
         run: |
-          gcc src\main.c src\engine.c src\util.c src\res_res.o -o dist\GrabStorm.exe `
+          gcc src\main.c src\engine.c src\util.c src\bridge.c src\res_res.o -o dist\GrabStorm.exe `
             -mwindows -O1 `
             -lwinhttp -lws2_32 -ladvapi32 -lcomctl32 -lshell32 -lole32 -lgdi32 -luser32 -s
           if ($LASTEXITCODE -ne 0) { throw "gcc failed" }

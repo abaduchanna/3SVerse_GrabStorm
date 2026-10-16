@@ -13,9 +13,9 @@ BEGIN
         BLOCK "040904B0"
         BEGIN
             VALUE "FileDescription",  "GrabStorm - 3SVerse multi-segment download accelerator"
-            VALUE "FileVersion",      "1.0.0.0"
+            VALUE "FileVersion",      "1.1.0.0"
             VALUE "ProductName",      "GrabStorm"
-            VALUE "ProductVersion",   "1.0.0"
+            VALUE "ProductVersion",   "1.1.0"
             VALUE "LegalCopyright",   "MIT License - Copyright (c) 2026 Abad Umair Channa / 3S Verse"
             VALUE "OriginalFilename", "GrabStorm.exe"
             VALUE "CompanyName",      "3SVerse"

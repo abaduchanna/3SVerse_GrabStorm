@@ -4,20 +4,58 @@
   <meta charset="utf-8">
   <title>GrabStorm Integration</title>
   <style>
-    body { font: 14px "Segoe UI", sans-serif; background: #07060b; color: #f5f1e6;
-           width: 320px; padding: 24px; }
-    h1 { font-size: 15px; letter-spacing: 2px; color: #6ee7ef; margin: 0 0 16px; }
-    label { display: flex; gap: 10px; align-items: center; cursor: pointer; }
-    p.dim { color: #9b97b3; font-size: 12px; }
+    :root { color-scheme: dark; }
+    body { font: 14px/1.5 "Segoe UI", sans-serif; background: #07060b; color: #f5f1e6;
+           width: 340px; padding: 24px; margin: 0; }
+    h1 { font-size: 13px; letter-spacing: 2.5px; margin: 0 0 4px;
+         background: linear-gradient(90deg, #6ee7ef, #e44bd7);
+         -webkit-background-clip: text; background-clip: text; color: transparent; }
+    .sub { font-size: 9.5px; letter-spacing: .3em; color: #6ee7ef; margin-bottom: 18px; }
+    label { display: flex; gap: 10px; align-items: center; cursor: pointer; margin: 10px 0; }
+    .card { background: #0d0c14; border: 1px solid #232130; border-radius: 12px;
+            padding: 14px; margin: 10px 0; }
+    .k { font-size: 9px; letter-spacing: .16em; color: #9b97b3; text-transform: uppercase;
+         margin: 0 0 8px; }
+    input[type=text], input[type=number] {
+      width: 100%; box-sizing: border-box; background: #12101a; color: #f5f1e6;
+      border: 1px solid #232130; border-radius: 8px; padding: 8px 10px; font: 13px "Segoe UI", sans-serif;
+    }
+    .row { display: flex; gap: 8px; align-items: center; }
+    button {
+      background: linear-gradient(90deg, #6ee7ef, #e44bd7); color: #07060b; border: 0;
+      border-radius: 999px; padding: 8px 16px; font: 600 12px "Segoe UI", sans-serif; cursor: pointer;
+    }
+    button.ghost { background: transparent; border: 1px solid #232130; color: #b9b5cc; }
+    p.dim { color: #9b97b3; font-size: 12px; margin: 10px 0 0; }
+    #status { font-size: 12px; margin-top: 12px; min-height: 16px; }
+    #status.ok { color: #c7ef70; } #status.bad { color: #e44bd7; }
   </style>
 </head>
 <body>
   <h1>GRABSTORM INTEGRATION</h1>
-  <label>
-    <input type="checkbox" id="auto">
-    <span>Auto-capture direct file links</span>
-  </label>
-  <p class="dim">Right-click any link for "Download with GrabStorm". Captured links open in the GrabStorm desktop app.</p>
+  <div class="sub">3SVERSE &middot; CAPTURE SETTINGS</div>
+
+  <label><input type="checkbox" id="auto"><span>Auto-capture browser downloads</span></label>
+  <label><input type="checkbox" id="panel"><span>Show GrabStorm button on video players</span></label>
+  <label><input type="checkbox" id="all"><span>Intercept every download (any file type)</span></label>
+
+  <div class="card">
+    <div class="k">Desktop bridge</div>
+    <div class="row" style="margin-bottom:8px">
+      <span style="font-size:12px;color:#9b97b3;min-width:44px">Port</span>
+      <input type="number" id="port" min="1024" max="65535">
+    </div>
+    <div class="k" style="margin-top:10px">Token (copy from GrabStorm &rsaquo; Options)</div>
+    <input type="text" id="token" placeholder="paste the token from the desktop app">
+    <div class="row" style="margin-top:12px">
+      <button id="save">Save</button>
+      <button class="ghost" id="test">Test connection</button>
+    </div>
+    <div id="status"></div>
+  </div>
+
+  <p class="dim">Right-click any link for &ldquo;Download with GrabStorm&rdquo;. When the desktop app
+  runs, captures are silent &mdash; no dialogs, the file lands in GrabStorm&rsquo;s queue directly.</p>
   <script src="options.js"></script>
 </body>
 </html>

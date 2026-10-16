@@ -3,7 +3,8 @@
 **GrabStorm** is a free and open multi-segment download accelerator for Windows 10/11.
 It moves files over HTTP(S) with up to 32 parallel connections, keeps per-download
 state so nothing is lost when you pause or close the app, and integrates with every
-major browser so one click sends the file straight into the queue.
+major browser — **silently**: the browser hands the file to GrabStorm and GrabStorm
+takes it from there, with no extra dialogs.
 
 > GrabStorm is an independent, clean-room implementation — it contains no code,
 > assets or resources from any other download manager. MIT licensed.
@@ -23,6 +24,10 @@ major browser so one click sends the file straight into the queue.
 | Unknown-size streaming | Servers without range support are handled with a single robust stream, still fully resumable across restarts |
 | Clipboard monitor | Copy a link to an installer/archive/media file and GrabStorm opens the grab dialog for you (on/off in Options) |
 | Browser integration | The bundled **GrabStorm Integration** extension adds a right-click *Download with GrabStorm* action and auto-captures direct file links; Setup can auto-install it into every Chromium browser and Firefox via per-user policies |
+| **Silent capture bridge** | The desktop app runs a token-authed HTTP bridge on `127.0.0.1` — the extension probes it (`/status/204+grabstorm`), then POSTs captures directly into the queue. No protocol dialogs, no tab flash, nothing to click. The bridge is loopback-only, DNS-rebinding shielded and off by default when disabled in Options |
+| **Download takeover** | When a browser starts downloading a capturable file type (installers, archives, media, documents…), the extension cancels the browser's slow single-stream fetch and re-routes it into GrabStorm's segmented engine. Optionally intercept *every* download |
+| **Video panel & sniffing** | A small gradient **GrabStorm pill** appears next to `<video>`/`<audio>` players; media requests (mp4/mkv/webm/m3u8-style streams) are sniffed in the background so the best candidate is one click away |
+| Cookies & referrer preserved | Captures carry the page referrer and the site's cookies from the browser session, so authenticated downloads (premium file hosts) keep working |
 | `grabstorm://` protocol | Any app or web page can hand a URL to GrabStorm via `grabstorm://add?u=<url>&r=<referrer>` |
 | 3SVerse brand UI | Full xfer design system: the 3SVerse wordmark, hero spiral, glossy orb, cards and cyan→magenta CTAs — with proper **dark and light themes** (persisted, DWM-aware title bar) |
 | Tray resident | Close the window and GrabStorm keeps working from the tray; completion and error balloon notifications |
@@ -39,7 +44,7 @@ which are shown in bytes (`KB`, `MB`, `GB`) — 8 bits = 1 byte.
 ## Install
 
 ### Setup (recommended)
-1. Download `GrabStorm_v1.0.0_Setup.exe` from the [releases page](https://github.com/abaduchanna/3SVerse_TurboGrab/releases).
+1. Download `GrabStorm_v1.1.0_Setup.exe` from the [releases page](https://github.com/abaduchanna/3SVerse_TurboGrab/releases).
 2. Run it — no admin rights needed (installs per-user).
 3. Keep **Auto-install the GrabStorm browser extension** checked; the installer
    writes per-user policies for every Chromium browser it finds
@@ -74,7 +79,9 @@ Manual option: download `GrabStorm_Extension_Chrome.zip`, enable Developer mode 
 - Right-click a row for: open file / open folder / resume / pause / restart /
   copy URL / delete. Double-click opens the finished file.
 - **Options** — segments per download (1–32), max active downloads (1–10),
-  download folder, clipboard monitor toggle.
+  download folder, clipboard monitor toggle, browser bridge (on/off, port,
+  token with one-click regeneration — the extension's Options page needs the
+  same port and token; a *Test connection* button verifies the pair).
 
 Everything is stored under `HKCU\Software\3SVerse\GrabStorm` and the download
 folder — leave nothing behind when you uninstall.
@@ -83,7 +90,7 @@ folder — leave nothing behind when you uninstall.
 
 ```
 windres src/res.rc -O coff -o src/res_res.o
-gcc src/main.c src/engine.c src/util.c src/res_res.o -o GrabStorm.exe ^
+gcc src/main.c src/engine.c src/util.c src/bridge.c src/res_res.o -o GrabStorm.exe ^
     -mwindows -O1 -lwinhttp -lws2_32 -ladvapi32 -lcomctl32 -lshell32 ^
     -lole32 -lgdi32 -luser32 -s
 ```
@@ -95,7 +102,7 @@ builds the installer with Inno Setup, publishes the CRX3/XPI/update.xml to the
 ## Project layout
 
 ```
-src/            GrabStorm.exe sources (main.c UI, engine.c downloader, util.c)
+src/            GrabStorm.exe sources (main.c UI, engine.c downloader, bridge.c extension bridge, util.c)
 src/res/        icon, manifest, brand art (logo / spiral / orb RCDATA)
 extension/      GrabStorm Integration browser extension (MV3 + Firefox)
 scripts/        CRX3 packer/verifier + asset generator
@@ -106,8 +113,9 @@ installer.iss   Inno Setup script (per-user, browser policies, protocol)
 ## Privacy
 
 GrabStorm talks only to the server of the file you are downloading. No analytics,
-no crash reporting, no phone-home. The extension talks only to the local
-`grabstorm://` handler and to `api.sync` storage for its single setting.
+no crash reporting, no phone-home. The extension talks to the loopback bridge on
+`127.0.0.1` (port and token are shown in GrabStorm Options), reads site cookies
+for captures you trigger, and stores its settings in sync storage — nothing else.
 
 ## License
 

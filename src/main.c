@@ -1,4 +1,4 @@
-/* 3SVerse GrabStorm v1.0.0 — multi-segment download accelerator for Windows
+/* 3SVerse GrabStorm v1.1.0 — multi-segment download accelerator for Windows
  * MIT License — Copyright (c) 2026 Abad Umair Channa / 3S Verse
  *
  * Clean-room statement: GrabStorm is an independent, original implementation
@@ -10,7 +10,8 @@
  *
  * Engine: WinHTTP, dynamic file segmentation (up to 32 connections), resume
  * via .gstmeta, retry with backoff, queue, clipboard monitor, grabstorm://
- * protocol, browser extension integration (policy-installed by Setup).
+ * protocol. Browser integration: loopback HTTP bridge (silent capture,
+ * token-authed /add, presence probe) + policy-installed extension.
  */
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
@@ -25,18 +26,19 @@
 #include <math.h>
 #include "util.h"
 #include "engine.h"
+#include "bridge.h"
 
 /* GDI+ opaque types (flat API) */
 typedef struct GpGraphics GpGraphics;
 typedef struct GpImage GpImage;
 typedef struct GpImageAttributes GpImageAttributes;
 
-#define APP_TITLEW  L"3SVerse GrabStorm v1.0.0"
+#define APP_TITLEW  L"3SVerse GrabStorm v1.1.0"
 #define APP_CLASSW  L"3SVerseGrabStorm"
 #define BTN_CLASSW  L"3SVBtn"
 #define ADD_CLASSW  L"GSAddDlg"
 #define OPT_CLASSW  L"GSOptDlg"
-#define APP_VER_A   L"v1.0.0"
+#define APP_VER_A   L"v1.1.0"
 
 /* embedded brand art (RCDATA in src/res.rc) */
 #define RES_LOGO    101
@@ -71,6 +73,10 @@ typedef struct GpImageAttributes GpImageAttributes;
 #define IDC_OCLIP    225
 #define IDC_OSAVE    226
 #define IDC_OCANCEL  227
+#define IDC_OPORT    228
+#define IDC_OTOKEN   229
+#define IDC_OTGEN    230
+#define IDC_OBRIDGE  231
 
 /* list context menu ids */
 #define MNU_OPENFILE  9001
@@ -174,7 +180,9 @@ static HWND    g_aUrl, g_aName, g_aDir, g_aBrowse, g_aDown, g_aQueue, g_aCancel;
 /* options dialog state */
 static HWND g_hOptDlg;
 static HWND g_oSeg, g_oMap, g_oDir, g_oBrowse, g_oClip, g_oSave, g_oCancel;
+static HWND g_oPort, g_oToken, g_oTgen, g_oBridge;
 static BOOL g_clipOn = TRUE;
+static BOOL g_bridgeOn = TRUE;
 
 /* GDI+ state */
 static ULONG_PTR         g_gdipToken = 0;
@@ -833,6 +841,12 @@ static void ClipToggleText(void)
                                                   : L"Clipboard monitor: Off");
 }
 
+static void BridgeToggleText(void)
+{
+    if (g_oBridge) SetWindowTextW(g_oBridge, g_bridgeOn ? L"Browser bridge: On"
+                                                        : L"Browser bridge: Off");
+}
+
 static LRESULT CALLBACK OptDlgProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 {
     switch (msg) {
@@ -854,13 +868,24 @@ static LRESULT CALLBACK OptDlgProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         g_oClip = CreateWindowW(BTN_CLASSW, L"", WS_CHILD | WS_VISIBLE | WS_TABSTOP,
                                 28, 226, 240, 36, hwnd, (HMENU)IDC_OCLIP, h,
                                 (LPVOID)(INT_PTR)BSTYLE_TOGGLE);
+        g_oBridge = CreateWindowW(BTN_CLASSW, L"", WS_CHILD | WS_VISIBLE | WS_TABSTOP,
+                                28, 332, 240, 36, hwnd, (HMENU)IDC_OBRIDGE, h,
+                                (LPVOID)(INT_PTR)BSTYLE_TOGGLE);
+        g_oPort = CreateWindowW(L"EDIT", L"", WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_NUMBER,
+                                28, 396, 90, 30, hwnd, (HMENU)IDC_OPORT, h, NULL);
+        g_oToken = CreateWindowW(L"EDIT", L"", WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_AUTOHSCROLL,
+                                126, 396, 196, 30, hwnd, (HMENU)IDC_OTOKEN, h, NULL);
+        g_oTgen = CreateWindowW(BTN_CLASSW, L"New token",
+                                WS_CHILD | WS_VISIBLE | WS_TABSTOP,
+                                330, 396, 94, 30, hwnd, (HMENU)IDC_OTGEN, h,
+                                (LPVOID)(INT_PTR)BSTYLE_GHOST);
         g_oSave = CreateWindowW(BTN_CLASSW, L"Save",
                                 WS_CHILD | WS_VISIBLE | WS_TABSTOP,
-                                16, 300, 208, 40, hwnd, (HMENU)IDC_OSAVE, h,
+                                16, 458, 208, 40, hwnd, (HMENU)IDC_OSAVE, h,
                                 (LPVOID)(INT_PTR)BSTYLE_PRIMARY);
         g_oCancel = CreateWindowW(BTN_CLASSW, L"Cancel",
                                   WS_CHILD | WS_VISIBLE | WS_TABSTOP,
-                                  232, 300, 120, 40, hwnd, (HMENU)IDC_OCANCEL, h,
+                                  232, 458, 120, 40, hwnd, (HMENU)IDC_OCANCEL, h,
                                   (LPVOID)(INT_PTR)BSTYLE_GHOST);
         _snwprintf(buf, 32, L"%d", EngineGetSegments());
         SetWindowTextW(g_oSeg, buf);
@@ -868,20 +893,35 @@ static LRESULT CALLBACK OptDlgProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         SetWindowTextW(g_oMap, buf);
         g_clipOn = SettingsGetInt(L"ClipMonitor", 1) != 0;
         ClipToggleText();
+        g_bridgeOn = SettingsGetInt(L"BridgeOn", 1) != 0;
+        BridgeToggleText();
+        {
+            wchar_t pb[16], tb[128];
+            _snwprintf(pb, 16, L"%d", BridgePort());
+            SetWindowTextW(g_oPort, pb);
+            SettingsGetStr(L"BridgeToken", tb, 128, L"");
+            SetWindowTextW(g_oToken, tb);
+        }
         SendMessageW(g_oSeg, WM_SETFONT, (WPARAM)g_hFont, TRUE);
         SendMessageW(g_oMap, WM_SETFONT, (WPARAM)g_hFont, TRUE);
         SendMessageW(g_oDir, WM_SETFONT, (WPARAM)g_hFont, TRUE);
         SendMessageW(g_oBrowse, WM_SETFONT, (WPARAM)g_hFontBtn, TRUE);
         SendMessageW(g_oClip,   WM_SETFONT, (WPARAM)g_hFontBtn, TRUE);
+        SendMessageW(g_oBridge, WM_SETFONT, (WPARAM)g_hFontBtn, TRUE);
+        SendMessageW(g_oPort,   WM_SETFONT, (WPARAM)g_hFont, TRUE);
+        SendMessageW(g_oToken,  WM_SETFONT, (WPARAM)g_hFont, TRUE);
+        SendMessageW(g_oTgen,   WM_SETFONT, (WPARAM)g_hFontBtn, TRUE);
         SendMessageW(g_oSave,   WM_SETFONT, (WPARAM)g_hFontBtn, TRUE);
         SendMessageW(g_oCancel, WM_SETFONT, (WPARAM)g_hFontBtn, TRUE);
         SubField(g_oSeg);
         SubField(g_oMap);
         SubField(g_oDir);
+        SubField(g_oPort);
+        SubField(g_oToken);
         SetFocus(g_oSeg);
         {
             int w = 460 + 2 * GetSystemMetrics(SM_CXFIXEDFRAME);
-            int hgt = 352 + 2 * GetSystemMetrics(SM_CYFIXEDFRAME) + GetSystemMetrics(SM_CYCAPTION);
+            int hgt = 514 + 2 * GetSystemMetrics(SM_CYFIXEDFRAME) + GetSystemMetrics(SM_CYCAPTION);
             SetWindowPos(hwnd, NULL,
                          wa.left + ((wa.right - wa.left) - w) / 2,
                          wa.top + ((wa.bottom - wa.top) - hgt) / 2, 0, 0,
@@ -899,7 +939,7 @@ static LRESULT CALLBACK OptDlgProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
             HBITMAP bmp = CreateCompatibleBitmap(dc, r.right, r.bottom);
             HGDIOBJ ob = SelectObject(mem, bmp);
             FillSolid(mem, r, g_pal.bg);
-            card.left = 16; card.top = 36; card.right = 444; card.bottom = 276;
+            card.left = 16; card.top = 36; card.right = 444; card.bottom = 446;
             FillRound(mem, card, 14, g_pal.card, g_pal.border);
             SetBkMode(mem, TRANSPARENT);
             PaintTextMono(mem, L"SEGMENTS PER DOWNLOAD (1-32)",
@@ -908,6 +948,12 @@ static LRESULT CALLBACK OptDlgProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
                           (RECT){ 28, 104, 400, 120 }, g_hLbl, g_pal.txtMute, 1, DT_LEFT);
             PaintTextMono(mem, L"DOWNLOAD FOLDER",
                           (RECT){ 28, 162, 400, 178 }, g_hLbl, g_pal.txtMute, 1, DT_LEFT);
+            PaintTextMono(mem, L"BROWSER BRIDGE — SILENT EXTENSION CAPTURE",
+                          (RECT){ 28, 314, 420, 330 }, g_hLbl, g_pal.txtMute, 1, DT_LEFT);
+            PaintTextMono(mem, L"PORT",
+                          (RECT){ 28, 380, 90, 394 }, g_hLbl, g_pal.txtMute, 1, DT_LEFT);
+            PaintTextMono(mem, L"TOKEN (EXTENSION MUST MATCH)",
+                          (RECT){ 126, 380, 420, 394 }, g_hLbl, g_pal.txtMute, 1, DT_LEFT);
             BitBlt(dc, 0, 0, r.right, r.bottom, mem, 0, 0, SRCCOPY);
             SelectObject(mem, ob);
             DeleteObject(bmp);
@@ -929,8 +975,8 @@ static LRESULT CALLBACK OptDlgProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     case WM_COMMAND:
         switch (LOWORD(wp)) {
         case IDC_OSAVE: {
-            wchar_t b[32];
-            int segs, act;
+            wchar_t b[32], tb[128];
+            int segs, act, port;
             GetWindowTextW(g_oSeg, b, 32);
             segs = (int)wcstoul(b, NULL, 10);
             if (segs < 1) segs = 1;
@@ -940,10 +986,18 @@ static LRESULT CALLBACK OptDlgProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
             if (act < 1) act = 1;
             if (act > 10) act = 10;
             GetWindowTextW(g_oDir, g_defDir, MAX_PATH);
+            GetWindowTextW(g_oPort, b, 32);
+            port = (int)wcstoul(b, NULL, 10);
+            if (port < 1024 || port > 65535) port = BridgePort();
+            GetWindowTextW(g_oToken, tb, 128);
             EngineSetSegments(segs);
             EngineSetMaxActive(act);
             SettingsSetStr(L"Dir", g_defDir);
             SettingsSetInt(L"ClipMonitor", g_clipOn ? 1 : 0);
+            SettingsSetInt(L"BridgeOn", g_bridgeOn ? 1 : 0);
+            SettingsSetInt(L"BridgePort", port);
+            if (tb[0]) SettingsSetStr(L"BridgeToken", tb);
+            BridgeRestart(g_hMain);
             ModalQuit(hwnd);
             return 0;
         }
@@ -957,6 +1011,17 @@ static LRESULT CALLBACK OptDlgProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
             g_clipOn = !g_clipOn;
             ClipToggleText();
             return 0;
+        case IDC_OBRIDGE:
+            g_bridgeOn = !g_bridgeOn;
+            BridgeToggleText();
+            return 0;
+        case IDC_OTGEN: {
+            wchar_t tb[128];
+            BridgeRenewToken(hwnd);
+            SettingsGetStr(L"BridgeToken", tb, 128, L"");
+            SetWindowTextW(g_oToken, tb);
+            return 0;
+        }
         }
         return 0;
     case WM_CLOSE:
@@ -998,7 +1063,7 @@ static void OpenOptsDlg(void)
     if (g_hOptDlg) { SetForegroundWindow(g_hOptDlg); return; }
     g_hOptDlg = CreateWindowW(OPT_CLASSW, L"GrabStorm options",
         WS_POPUP | WS_CAPTION | WS_SYSMENU,
-        CW_USEDEFAULT, CW_USEDEFAULT, 460, 352,
+        CW_USEDEFAULT, CW_USEDEFAULT, 460, 514,
         g_hMain, NULL, g_hInst, NULL);
     ApplyDwm(g_hOptDlg);
     RunModal(g_hOptDlg);
@@ -1453,6 +1518,25 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
                 InvalidateRect(hwnd, NULL, FALSE);
         }
         return 0;
+    case WM_APP_BRIDGE: {
+        BridgeAdd *ba = (BridgeAdd *)lp;
+        if (ba) {
+            wchar_t dir[MAX_PATH], nm[160];
+            EngineDefaultDir(dir, MAX_PATH);
+            nm[0] = 0;
+            if (ba->name[0]) {
+                lstrcpynW(nm, ba->name, 160);
+                SanitizeFilenameW(nm, 160);
+            }
+            EngineAdd(ba->url, dir, nm, TRUE);
+            EngineTick();
+            RefreshList(1);
+            InvalidateRect(hwnd, &g_rcChip, FALSE);
+            InvalidateRect(hwnd, &g_rcStatus, FALSE);
+            HeapFree(GetProcessHeap(), 0, ba);
+        }
+        return 0;
+    }
     case WM_APP_JOB: {
         Job *j = EngineById((int)wp);
         RefreshList(1);
@@ -1674,6 +1758,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         Shell_NotifyIconW(NIM_DELETE, &g_nid);
         KillTimer(hwnd, 1);
         KillTimer(hwnd, 2);
+        BridgeStop();
         EngineShutdown();
         for (j = EngineFirst(); j; j = j->next) {
             if (j->hThread) { WaitForSingleObject(j->hThread, 100); }
@@ -1818,6 +1903,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR cmdLine, int nShow)
     if (!g_hMain) return 1;
 
     EngineInit(g_hMain);
+    BridgeStart(g_hMain);
     ApplyDwm(g_hMain);
     ShowWindow(g_hMain, nShow);
     UpdateWindow(g_hMain);
