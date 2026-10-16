@@ -35,9 +35,9 @@ jobs:
       - name: Compile TurboGrab.exe
         shell: pwsh
         run: |
-          gcc src\main.c src\icon_res.o -o dist\TurboGrab.exe `
+          gcc src\main.c src\localsrv.c src\icon_res.o -o dist\TurboGrab.exe `
             -mwindows `
-            -lwinhttp -lcomctl32 -lshell32 -lole32 -lgdi32 -luser32 -lkernel32 -s
+            -lwinhttp -lws2_32 -ladvapi32 -lcomctl32 -lshell32 -lole32 -lgdi32 -luser32 -lkernel32 -s
           if ($LASTEXITCODE -ne 0) { throw "gcc failed" }
           Get-Item dist\TurboGrab.exe | Select-Object Name,Length
 
@@ -53,6 +53,17 @@ jobs:
         run: |
           Compress-Archive -Path dist\* -DestinationPath Output\TurboGrab_Portable.zip -Force
 
+      - name: Package browser extensions
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path extchrome, extfirefox | Out-Null
+          Copy-Item extension\* extchrome\ -Recurse -Exclude manifest.firefox.json
+          Copy-Item extension\* extfirefox\ -Recurse -Exclude manifest.json
+          Rename-Item extfirefox\manifest.firefox.json manifest.json
+          Compress-Archive -Path extchrome\* -DestinationPath Output\TurboGrab_Extension_Chrome.zip -Force
+          Compress-Archive -Path extfirefox\* -DestinationPath Output\TurboGrab_Extension_Firefox.zip -Force
+          Get-ChildItem Output | Select-Object Name,Length
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
@@ -63,6 +74,7 @@ jobs:
             dist/README.md
             Output/*.exe
             Output/*.zip
+            Output/TurboGrab_Extension_*.zip
 
   release:
     if: startsWith(github.ref, 'refs/tags/v')
@@ -78,7 +90,7 @@ jobs:
       - name: Flatten artifact tree (upload-artifact@v4 preserves structure)
         run: |
           mkdir -p rel
-          find artifact -type f \( -name "*_Setup.exe" -o -name "*Portable.zip" \) -exec mv {} rel/ \;
+          find artifact -type f \( -name "*_Setup.exe" -o -name "*Portable.zip" -o -name "TurboGrab_Extension_*.zip" \) -exec mv {} rel/ \;
           ls -la rel/
 
       - name: Create release
@@ -87,4 +99,4 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: |
           TAG="${GITHUB_REF_NAME}"
-          gh release create "$TAG" rel/* --title "TurboGrab ${TAG}" --notes "Free & open download accelerator for Windows — multi-segment HTTP(S) downloads with pause/resume, queue, clipboard monitoring and category folders. MIT licensed. Install the Setup exe, or unzip the Portable package and run TurboGrab.exe."
+          gh release create "$TAG" rel/* --title "TurboGrab ${TAG}" --notes "Free & open download accelerator for Windows — multi-segment HTTP(S) downloads with pause/resume, queue, clipboard monitoring, category folders and browser extension integration. MIT licensed.\n\n- TurboGrab_v${TAG#v}_Setup.exe — installer (no admin needed)\n- TurboGrab_Portable.zip — unzip anywhere and run TurboGrab.exe\n- TurboGrab_Extension_Chrome.zip — Edge/Chrome/Brave extension: unzip, then chrome://extensions > Developer mode > Load unpacked\n- TurboGrab_Extension_Firefox.zip — Firefox extension: unzip, then about:debugging#/runtime/this-firefox > Load Temporary Add-on, or install via about:addons"

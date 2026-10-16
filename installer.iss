@@ -1,7 +1,7 @@
 ; TurboGrab setup — Inno Setup 6
 ; PrivilegesRequired=lowest -> per-user install into %LOCALAPPDATA%, no UAC
 #define MyAppName "TurboGrab"
-#define MyAppVersion "1.0.0"
+#define MyAppVersion "1.1.0"
 #define MyAppPublisher "3S Verse"
 #define MyAppExeName "TurboGrab.exe"
 

@@ -8,7 +8,10 @@
 **TurboGrab** is a free, open-source download manager and accelerator for
 Windows. Paste a link, press **Start**, and the file is pulled down with
 multiple parallel connections — then paused, resumed, queued and sorted into
-folders exactly the way a modern download manager should.
+folders exactly the way a modern download manager should. A companion
+**browser extension** (Chrome / Edge / Brave / Firefox) hands links and
+browser downloads straight to the app, just like the classic download
+managers do.
 
 It is a clean-room alternative to proprietary download accelerators such as
 *Internet Download Manager (IDM)*: the same core ideas (multi-segment
@@ -38,6 +41,13 @@ released under the MIT license.
 - **Category folders** — files are auto-sorted into `Videos`, `Music`,
   `Documents`, `Programs`, `Compressed` and `Images` subfolders inside your
   download folder (by extension). Can be turned off in Settings.
+- **Browser extension integration (v1.1.0)** — install the TurboGrab
+  Integration extension and downloads can be sent to the app from any page:
+  right-click any link/media and choose **TurboGrab**, or let the extension
+  **take over matching browser downloads** automatically (archive, program,
+  media and document types by default — configurable). The extension talks to
+  a tiny localhost server built into TurboGrab (127.0.0.1 only, protected by
+  a per-install token). Works with Chrome, Edge, Brave, Opera and Firefox.
 - **System tray** — closing to the tray keeps every download running;
   double-click restores the window.
 - **Retry logic** — every segment is retried automatically on transient
@@ -59,6 +69,22 @@ released under the MIT license.
 ### Portable
 Unzip `TurboGrab_Portable.zip` anywhere and run `TurboGrab.exe`.
 
+### Browser extension (optional, v1.1.0+)
+1. Download `TurboGrab_Extension_Chrome.zip` (Chrome, Edge, Brave, Opera) or
+   `TurboGrab_Extension_Firefox.zip` (Firefox) from the releases page.
+2. Unzip it to a folder you keep around.
+3. **Chrome/Edge/Brave:** open `chrome://extensions`, enable **Developer
+   mode**, click **Load unpacked** and select the unzipped folder.
+   **Firefox:** open `about:debugging#/runtime/this-firefox`, click
+   **Load Temporary Add-on** and pick `manifest.json`, or install it through
+   `about:addons` (gear icon > Install Add-on From File after unzipping).
+4. Open TurboGrab > **Settings** and press **Copy token**, then open the
+   extension's **Settings** page and paste the token. Press **Test
+   connection** — it should say *Connected*.
+5. Done. Right-click any link → **TurboGrab → Download link with
+   TurboGrab**, or let the extension take over downloads automatically
+   (toggle in the extension popup).
+
 ## Usage
 
 1. Copy a file URL, or press **Add URL** and paste it.
@@ -79,6 +105,8 @@ Unzip `TurboGrab_Portable.zip` anywhere and run `TurboGrab.exe`.
 | Default download folder | — | `Downloads` | Where new jobs start |
 | Watch clipboard | on/off | on | Popup when a link is copied |
 | Category folders | on/off | on | Auto-sort by file type |
+| Browser integration | on/off | on | Localhost server the extension talks to (port 8777) |
+| Access token | 32 hex chars | auto-generated | Shown in Settings; the extension must present it |
 
 Settings and the download queue are stored in
 `%APPDATA%\TurboGrab\turbograb.ini`.
@@ -88,11 +116,12 @@ Settings and the download queue are stored in
 - No analytics, no telemetry, no accounts, no remote servers.
 - The only network traffic is the downloads themselves, made by your
   machine, to the servers you choose.
+- The browser integration server listens on **127.0.0.1 only** (never on the
+  network) and requires a random per-install token before it accepts a link.
 - Nothing about your downloads ever leaves your computer.
 
 ## Roadmap
 
-- Browser extension integration (Chrome / Firefox download interception)
 - Batch import (list of URLs from a text file)
 - Download scheduler (start at a given time, shut down after finishing)
 - Site grabber and speed limiter
@@ -105,8 +134,9 @@ Any MinGW-w64 toolchain:
 
 ```
 windres src/icon.rc -O coff -o src/icon_res.o
-gcc src/main.c src/icon_res.o -o TurboGrab.exe -mwindows \
-    -lwinhttp -lcomctl32 -lshell32 -lole32 -lgdi32 -luser32 -lkernel32 -s
+gcc src/main.c src/localsrv.c src/icon_res.o -o TurboGrab.exe -mwindows \
+    -lwinhttp -lws2_32 -ladvapi32 -lcomctl32 -lshell32 -lole32 -lgdi32 \
+    -luser32 -lkernel32 -s
 ```
 
 CI (`.github/workflows/windows.yml`) compiles the exe with MinGW gcc and the

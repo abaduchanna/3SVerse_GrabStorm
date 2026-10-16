@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>TurboGrab Integration — Settings</title>
+<style>
+  :root { color-scheme: dark; }
+  body { margin: 0; font: 14px "Segoe UI", system-ui, sans-serif; background: #0d1117; color: #e8ecf2; }
+  .wrap { max-width: 720px; margin: 30px auto; background: #10141c; border: 1px solid #232a36; border-radius: 12px; padding: 26px 30px 30px; }
+  header { display: flex; align-items: center; gap: 12px; margin-bottom: 6px; }
+  .bolt { width: 34px; height: 34px; border-radius: 9px; background: linear-gradient(135deg, #f7b733, #fc4a1a);
+          display: flex; align-items: center; justify-content: center; font-weight: 700; color: #10141c; }
+  h1 { font-size: 19px; margin: 0; }
+  p.lead { color: #93a0b4; margin: 4px 0 20px; }
+  label { display: block; margin: 16px 0 6px; font-weight: 600; }
+  input[type=text], input[type=password], textarea {
+    width: 100%; box-sizing: border-box; background: #0d1117; color: #e8ecf2;
+    border: 1px solid #2d3a4e; border-radius: 8px; padding: 9px 11px; font: 13px ui-monospace, Consolas, monospace;
+  }
+  textarea { min-height: 70px; }
+  .check { display: flex; align-items: flex-start; gap: 10px; margin: 14px 0; cursor: pointer; }
+  .check input { margin-top: 3px; }
+  .check small { display: block; color: #93a0b4; font-weight: 400; margin-top: 2px; }
+  .row { display: flex; gap: 10px; margin-top: 22px; }
+  button { background: linear-gradient(135deg, #f7b733, #fc4a1a); color: #10141c; font-weight: 700;
+           border: 0; border-radius: 8px; padding: 10px 18px; cursor: pointer; }
+  button.ghost { background: #1c2534; color: #e8ecf2; border: 1px solid #2d3a4e; font-weight: 500; }
+  #testOut { margin-top: 14px; font-size: 13px; color: #93a0b4; }
+  #testOut.ok { color: #37c26e; } #testOut.bad { color: #e0484f; }
+  code { background: #1c2534; padding: 2px 6px; border-radius: 5px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="bolt">TG</div>
+    <h1>TurboGrab Integration — Settings</h1>
+  </header>
+  <p class="lead">Connect the browser to the TurboGrab Windows app. The app must be running with
+     <b>Settings &gt; Browser extension integration</b> switched on.</p>
+
+  <label for="serverUrl">TurboGrab server address</label>
+  <input type="text" id="serverUrl" placeholder="http://127.0.0.1:8777">
+
+  <label for="token">Access token</label>
+  <input type="password" id="token" placeholder="paste the token from TurboGrab &gt; Settings &gt; Copy token">
+  <small style="color:#93a0b4">Open TurboGrab &gt; <b>Settings</b> &gt; <b>Copy token</b>, then paste it here. The token keeps other programs from sending commands to the app.</small>
+
+  <label class="check">
+    <input type="checkbox" id="takeover">
+    <span>Take over browser downloads<small>Matching downloads are cancelled in the browser and sent to TurboGrab instead — the same behaviour as IDM Integration.</small></span>
+  </label>
+
+  <label class="check">
+    <input type="checkbox" id="takeoverAll">
+    <span>Take over <b>all</b> http(s) downloads<small>Off = only the file types listed below are taken over. On = every download, regardless of type.</small></span>
+  </label>
+
+  <label for="exts">File types to take over</label>
+  <textarea id="exts" spellcheck="false" placeholder="zip, rar, exe, mp4, ..."></textarea>
+
+  <label class="check">
+    <input type="checkbox" id="autoStart">
+    <span>Start downloads automatically<small>On = TurboGrab queues the download right away. Off = the usual "Add download" window opens first, so you can pick the folder.</small></span>
+  </label>
+
+  <label class="check">
+    <input type="checkbox" id="notifyFail">
+    <span>Notify when TurboGrab is not running<small>Show a notification when a link cannot be delivered.</small></span>
+  </label>
+
+  <div class="row">
+    <button id="save">Save settings</button>
+    <button id="test" class="ghost">Test connection</button>
+  </div>
+  <div id="testOut"></div>
+</div>
+<script src="options.js"></script>
+</body>
+</html>

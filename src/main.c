@@ -1,12 +1,14 @@
-/* TurboGrab v1.0.0 — free & open download accelerator for Windows
+/* TurboGrab v1.1.0 — free & open download accelerator for Windows
  * Multi-segment HTTP(S) downloads with pause/resume, queue, clipboard
- * monitoring and category folders. Clean-room C (Win32 + WinHTTP).
+ * monitoring, category folders and browser extension integration.
+ * Clean-room C (Win32 + WinHTTP + Winsock).
  *
  * MIT License — Copyright (c) 2026 Abad Umair Channa / 3S Verse
  * https://github.com/abaduchanna/3SVerse_TurboGrab
  */
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+#include <wincrypt.h>
 #include <windowsx.h>
 #include <winhttp.h>
 #include <commctrl.h>
@@ -17,12 +19,14 @@
 #include <string.h>
 #include <ctype.h>
 
+#include "localsrv.h"
+
 #pragma comment(lib, "winhttp.lib")
 #pragma comment(lib, "comctl32.lib")
 #pragma comment(lib, "shell32.lib")
 #pragma comment(lib, "ole32.lib")
 
-#define APP_TITLE   "TurboGrab v1.0.0"
+#define APP_TITLE   "TurboGrab v1.1.0"
 #define APP_CLASS   "TurboGrabMainWnd"
 #define ADDPOP_CLASS "TurboGrabAddWnd"
 #define SETPOP_CLASS "TurboGrabSetWnd"
@@ -56,6 +60,10 @@
 #define IDC_SCAT    406
 #define IDC_SSAVE   407
 #define IDC_SCLOSE  408
+#define IDC_SBROWSER 409
+#define IDC_SPORT    410
+#define IDC_STOKEN   411
+#define IDC_SCOPYTOK 412
 
 /* tray / context menu ids */
 #define IDM_SHOW     501
@@ -136,6 +144,11 @@ static BOOL  g_trayOn = FALSE;
 static char  g_iniPath[MAX_PATH];
 static DWORD g_lastClipTick = 0;
 static char  g_clipLast[2048];
+
+/* browser extension integration */
+static int  g_browserOn   = 1;
+static int  g_browserPort = 8777;
+static char g_browserToken[64] = "";
 
 /* ---- forward declarations ---- */
 static void KickQueue(void);
@@ -307,6 +320,11 @@ static void LoadSettings(void)
     g_set.clipboard  = GetPrivateProfileIntA("Settings", "clipboard", 1, g_iniPath);
     g_set.categories = GetPrivateProfileIntA("Settings", "categories", 1, g_iniPath);
     GetPrivateProfileStringA("Settings", "dir", "", g_set.dir, MAX_PATH, g_iniPath);
+    g_browserOn   = GetPrivateProfileIntA("Browser", "enabled", 1, g_iniPath);
+    g_browserPort = GetPrivateProfileIntA("Browser", "port", 8777, g_iniPath);
+    GetPrivateProfileStringA("Browser", "token", "", g_browserToken,
+                             sizeof(g_browserToken), g_iniPath);
+    if (g_browserPort < 1024 || g_browserPort > 65535) g_browserPort = 8777;
     if (g_set.segments   < 1)  g_set.segments = 1;
     if (g_set.segments   > MAX_SEGMENTS) g_set.segments = MAX_SEGMENTS;
     if (g_set.concurrent < 1)  g_set.concurrent = 1;
@@ -335,6 +353,47 @@ static void SaveSettings(void)
     sprintf(b, "%d", g_set.categories);
     WritePrivateProfileStringA("Settings", "categories", b, g_iniPath);
     WritePrivateProfileStringA("Settings", "dir", g_set.dir, g_iniPath);
+}
+
+/* ------------------------- browser integration --------------------- */
+
+/* generate the extension token on first run and store it in the INI */
+static void BrowserTokenEnsure(void)
+{
+    static const char *hx = "0123456789abcdef";
+    unsigned char raw[16];
+    int i;
+    HCRYPTPROV h = 0;
+
+    if (g_browserToken[0]) return;
+    ZeroMemory(raw, sizeof(raw));
+    if (CryptAcquireContextA(&h, NULL, NULL, PROV_RSA_FULL, CRYPT_VERIFYCONTEXT)) {
+        CryptGenRandom(h, sizeof(raw), raw);
+        CryptReleaseContext(h, 0);
+    } else {
+        DWORD t = GetTickCount();
+        for (i = 0; i < 16; i++)
+            raw[i] = (unsigned char)(((t * (i + 7919)) >> ((i % 7) + 1)) & 0xFF);
+    }
+    for (i = 0; i < 16; i++) {
+        g_browserToken[i * 2]     = hx[raw[i] >> 4];
+        g_browserToken[i * 2 + 1] = hx[raw[i] & 15];
+    }
+    g_browserToken[32] = 0;
+    WritePrivateProfileStringA("Browser", "token", g_browserToken, g_iniPath);
+}
+
+/* (re)start the localhost integration server with current settings */
+static void BrowserSrvApply(void)
+{
+    BrowserSrvCfg c;
+    if (!g_hMain) return;
+    ZeroMemory(&c, sizeof(c));
+    c.hwnd    = g_hMain;
+    c.enabled = g_browserOn;
+    c.port    = g_browserPort;
+    c.token   = g_browserToken;
+    BrowserSrvStart(&c);
 }
 
 /* ============================= job list ============================= */
@@ -1260,7 +1319,21 @@ static void SettingsSave(HWND hw)
 
     g_set.clipboard  = (SendMessageA(GetDlgItem(hw, IDC_SCLIP), BM_GETCHECK, 0, 0) == BST_CHECKED) ? 1 : 0;
     g_set.categories = (SendMessageA(GetDlgItem(hw, IDC_SCAT),  BM_GETCHECK, 0, 0) == BST_CHECKED) ? 1 : 0;
+
+    g_browserOn = (SendMessageA(GetDlgItem(hw, IDC_SBROWSER), BM_GETCHECK, 0, 0) == BST_CHECKED) ? 1 : 0;
+    GetWindowTextA(GetDlgItem(hw, IDC_SPORT), b, sizeof(b));
+    v = atoi(b);
+    if (v < 1024 || v > 65535) v = 8777;
+    g_browserPort = v;
+
     SaveSettings();
+    {
+        char pb[16];
+        sprintf(pb, "%d", g_browserPort);
+        WritePrivateProfileStringA("Browser", "enabled", g_browserOn ? "1" : "0", g_iniPath);
+        WritePrivateProfileStringA("Browser", "port", pb, g_iniPath);
+    }
+    BrowserSrvApply();
     MessageBoxA(hw, "Settings saved.", APP_TITLE, MB_ICONINFORMATION);
 }
 
@@ -1305,10 +1378,33 @@ static LRESULT CALLBACK SetWndProc(HWND hw, UINT msg, WPARAM wp, LPARAM lp)
         SendMessageA(c, BM_SETCHECK, g_set.categories ? BST_CHECKED : BST_UNCHECKED, 0);
         SendMessageA(c, WM_SETFONT, (WPARAM)g_hFont, TRUE);
 
+        /* browser extension integration */
+        c = CreateWindowA("BUTTON", "Browser extension integration (localhost server)",
+            WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX,
+            12, 200, 340, 22, hw, (HMENU)IDC_SBROWSER, h, NULL);
+        SendMessageA(c, BM_SETCHECK, g_browserOn ? BST_CHECKED : BST_UNCHECKED, 0);
+        SendMessageA(c, WM_SETFONT, (WPARAM)g_hFont, TRUE);
+
+        CreateWindowA("STATIC", "Server port:", WS_CHILD | WS_VISIBLE,
+            12, 232, 90, 18, hw, NULL, h, NULL);
+        sprintf(b, "%d", g_browserPort);
+        c = CreateWindowA("EDIT", b, WS_CHILD | WS_VISIBLE | WS_BORDER | ES_AUTOHSCROLL,
+            108, 230, 60, 24, hw, (HMENU)IDC_SPORT, h, NULL);
+        SendMessageA(c, WM_SETFONT, (WPARAM)g_hFont, TRUE);
+
+        CreateWindowA("STATIC", "Extension token (paste into the extension options):",
+            WS_CHILD | WS_VISIBLE, 12, 262, 340, 18, hw, NULL, h, NULL);
+        c = CreateWindowA("EDIT", g_browserToken,
+            WS_CHILD | WS_VISIBLE | WS_BORDER | ES_AUTOHSCROLL | ES_READONLY,
+            12, 282, 330, 24, hw, (HMENU)IDC_STOKEN, h, NULL);
+        SendMessageA(c, WM_SETFONT, (WPARAM)g_hFont, TRUE);
+        CreateWindowA("BUTTON", "Copy token", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
+            352, 280, 110, 27, hw, (HMENU)IDC_SCOPYTOK, h, NULL);
+
         CreateWindowA("BUTTON", "Save", WS_CHILD | WS_VISIBLE | BS_DEFPUSHBUTTON,
-            12, 204, 90, 30, hw, (HMENU)IDC_SSAVE, h, NULL);
+            12, 322, 90, 30, hw, (HMENU)IDC_SSAVE, h, NULL);
         CreateWindowA("BUTTON", "Close", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
-            112, 204, 90, 30, hw, (HMENU)IDC_SCLOSE, h, NULL);
+            112, 322, 90, 30, hw, (HMENU)IDC_SCLOSE, h, NULL);
         return 0;
     }
     case WM_COMMAND:
@@ -1316,6 +1412,21 @@ static LRESULT CALLBACK SetWndProc(HWND hw, UINT msg, WPARAM wp, LPARAM lp)
         case IDC_SSAVE:   SettingsSave(hw); return 0;
         case IDC_SCLOSE:  PopupClose(hw, &g_hSetWnd); return 0;
         case IDC_SBROWSE: BrowseForDir(hw, IDC_SDIR); return 0;
+        case IDC_SCOPYTOK: {
+            int len = (int)strlen(g_browserToken) + 1;
+            if (OpenClipboard(hw)) {
+                HGLOBAL hg = GlobalAlloc(GMEM_MOVEABLE, (SIZE_T)len);
+                if (hg) {
+                    char *p = (char *)GlobalLock(hg);
+                    if (p) { memcpy(p, g_browserToken, (size_t)len); GlobalUnlock(hg); }
+                    SetClipboardData(CF_TEXT, hg);
+                }
+                CloseClipboard();
+                MessageBoxA(hw, "Token copied. Paste it into the TurboGrab extension options page.",
+                            APP_TITLE, MB_ICONINFORMATION);
+            }
+            return 0;
+        }
         }
         break;
     case WM_CLOSE:
@@ -1333,7 +1444,7 @@ static void OpenSetPopup(void)
     GetWindowRect(g_hMain, &r);
     g_hSetWnd = CreateWindowA(SETPOP_CLASS, "TurboGrab settings",
         WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU,
-        r.left + 80, r.top + 60, 500, 280, g_hMain, NULL,
+        r.left + 80, r.top + 40, 500, 400, g_hMain, NULL,
         (HINSTANCE)GetWindowLongPtrA(g_hMain, GWLP_HINSTANCE), NULL);
     if (g_hSetWnd) {
         ShowWindow(g_hSetWnd, SW_SHOW);
@@ -1629,6 +1740,24 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         if (terminal) KickQueue();
         return 0;
     }
+    case WM_APP_BROWSE: {
+        BrowserReq *br = (BrowserReq *)lp;
+        if (br) {
+            if (br->autoStart) {
+                Job *j = JobCreate(br->url, g_set.dir, NULL);
+                if (j) {
+                    if (br->name[0]) SetJobName(j, br->name);
+                    UpdateRow(j);
+                    KickQueue();
+                    UpdateStatusLine();
+                }
+            } else {
+                OpenAddPopup(br->url);
+            }
+            HeapFree(GetProcessHeap(), 0, br);
+        }
+        return 0;
+    }
     case WM_APP_TRAY: {
         POINT pt;
         HMENU m;
@@ -1818,6 +1947,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     case WM_DESTROY:
         KillTimer(hwnd, 1);
         RemoveClipboardFormatListener(hwnd);
+        BrowserSrvStop();
         PostQuitMessage(0);
         return 0;
     }
@@ -1844,6 +1974,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR cmdLine, int nShow)
     BuildIniPath();
     LoadSettings();
     LoadJobs();
+    BrowserTokenEnsure();
 
     g_hFont = CreateFontA(16, 0, 0, 0, FW_NORMAL, 0, 0, 0, DEFAULT_CHARSET,
                           OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
@@ -1894,6 +2025,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR cmdLine, int nShow)
 
     ShowWindow(g_hMain, nShow);
     UpdateWindow(g_hMain);
+    BrowserSrvApply();
 
     while (GetMessageA(&msg, NULL, 0, 0) > 0) {
         TranslateMessage(&msg);
