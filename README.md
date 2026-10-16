@@ -11,9 +11,16 @@ multiple parallel connections — then paused, resumed, queued and sorted into
 folders exactly the way a modern download manager should. A companion
 **browser extension** (Chrome / Edge / Brave / Firefox) hands links and
 browser downloads straight to the app, just like the classic download
-managers do — and since **v1.2.0 the Setup installs that extension into
-every installed browser automatically**, the way the classic download
-managers do.
+managers do. The Setup installs that extension into every installed browser
+automatically — and since **v1.3.0 the app itself also re-registers the
+extension on every launch**, so a single restart of any browser is enough
+for it to appear.
+
+Since **v1.3.0 TurboGrab ships with a completely redesigned dark modern UI**:
+a flat icon toolbar, custom-drawn download list with inline colored progress
+bars, status dots, a live speed/counters strip, dark dialogs and a new
+**Browsers** window that shows, per browser, whether the TurboGrab extension
+is registered — with one-click Register / Repair buttons.
 
 It is a clean-room alternative to proprietary download accelerators such as
 *Internet Download Manager (IDM)*: the same core ideas (multi-segment
@@ -23,7 +30,7 @@ from any proprietary product. TurboGrab is not affiliated with Tonec s.r.o.
 It has **no accounts, no ads, no limits and no telemetry**, and it is
 released under the MIT license.
 
-## Features (v1.2.0)
+## Features (v1.3.0)
 
 - **Multi-segment downloads** — up to **16 parallel connections** per file
   (8 by default) via HTTP `Range` requests. Servers that do not support
@@ -50,6 +57,20 @@ released under the MIT license.
   media and document types by default — configurable). The extension talks to
   a tiny localhost server built into TurboGrab (127.0.0.1 only, protected by
   a per-install token). Works with Chrome, Edge, Brave, Opera and Firefox.
+- **Modern dark UI (v1.3.0)** — fully custom-drawn interface: dark theme
+  with rounded flat toolbar buttons (Add URL / Resume / Pause / Delete /
+  Open Folder / Browsers / Settings), taller list rows with alternating
+  colors, bold file names, rounded per-download progress bars that change
+  color by state (blue downloading, orange paused, green completed, red
+  failed), colored status dots, a live bottom strip (Active / Speed /
+  Queued / Completed), dark title bars and dialogs, and a friendly
+  empty-state hint.
+- **In-app extension registration (v1.3.0)** — on every start the app
+  detects the installed browsers (Chrome, Edge, Brave, Vivaldi, Opera,
+  Yandex, Firefox) and re-writes the per-user extension policy for each of
+  them — no installer needed, it self-heals even if the Setup task was
+  skipped. The new **Browsers** window shows every detected browser with
+  its registration status and **Register / Repair** buttons.
 - **One-click extension auto-install (v1.2.0)** — the Setup registers the
   extension into **every Chromium browser it detects** (Chrome, Edge, Brave,
   Opera, Vivaldi, Yandex) plus Firefox, using per-user browser policies
@@ -77,7 +98,7 @@ released under the MIT license.
 ## Install (Windows 10/11)
 
 ### Setup (recommended)
-1. Download `TurboGrab_v1.2.0_Setup.exe` from the
+1. Download `TurboGrab_v1.3.0_Setup.exe` from the
    [releases page](https://github.com/abaduchanna/3SVerse_TurboGrab/releases/latest).
 2. Run it — **no administrator rights needed** (installs per-user into
    `%LOCALAPPDATA%\3SVerse\TurboGrab`).
@@ -86,10 +107,14 @@ released under the MIT license.
 4. After the install finishes, **restart your browsers once** — the
    TurboGrab Integration extension appears automatically in Chrome, Edge,
    Brave, Opera, Vivaldi, Yandex and (on ESR/Dev/Nightly) Firefox.
-5. Open TurboGrab > **Settings** and press **Copy token**, then open the
+5. If a browser did not pick the extension up, open **Browsers** in the
+   TurboGrab toolbar: every detected browser is listed with its status —
+   press **Register / Repair** next to it (or **Register / Repair all**)
+   and restart that browser again.
+6. Open TurboGrab > **Settings** and press **Copy token**, then open the
    extension's **Settings** page and paste the token. Press **Test
    connection** — it should say *Connected*.
-6. Done. Right-click any link → **TurboGrab → Download link with
+7. Done. Right-click any link → **TurboGrab → Download link with
    TurboGrab**, or let the extension take over downloads automatically
    (toggle in the extension popup).
 
@@ -157,7 +182,7 @@ Any MinGW-w64 toolchain:
 
 ```
 windres src/icon.rc -O coff -o src/icon_res.o
-gcc src/main.c src/localsrv.c src/icon_res.o -o TurboGrab.exe -mwindows \
+gcc src/main.c src/localsrv.c src/browext.c src/icon_res.o -o TurboGrab.exe -mwindows \
     -lwinhttp -lws2_32 -ladvapi32 -lcomctl32 -lshell32 -lole32 -lgdi32 \
     -luser32 -lkernel32 -s
 ```

@@ -5,7 +5,7 @@
 ; Firefox found on the machine (HKCU policies, per-user, no admin needed).
 ; Self-hosted update source: https://abaduchanna.github.io/3SVerse_TurboGrab/
 #define MyAppName "TurboGrab"
-#define MyAppVersion "1.2.0"
+#define MyAppVersion "1.3.0"
 #define MyAppPublisher "3S Verse"
 #define MyAppExeName "TurboGrab.exe"
 

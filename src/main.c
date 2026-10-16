@@ -1,6 +1,7 @@
-/* TurboGrab v1.1.0 — free & open download accelerator for Windows
+/* TurboGrab v1.3.0 — free & open download accelerator for Windows
  * Multi-segment HTTP(S) downloads with pause/resume, queue, clipboard
  * monitoring, category folders and browser extension integration.
+ * Modern dark UI (custom-drawn), in-app extension auto-registration.
  * Clean-room C (Win32 + WinHTTP + Winsock).
  *
  * MIT License — Copyright (c) 2026 Abad Umair Channa / 3S Verse
@@ -20,13 +21,14 @@
 #include <ctype.h>
 
 #include "localsrv.h"
+#include "browext.h"
 
 #pragma comment(lib, "winhttp.lib")
 #pragma comment(lib, "comctl32.lib")
 #pragma comment(lib, "shell32.lib")
 #pragma comment(lib, "ole32.lib")
 
-#define APP_TITLE   "TurboGrab v1.1.0"
+#define APP_TITLE   "TurboGrab v1.3.0"
 #define APP_CLASS   "TurboGrabMainWnd"
 #define ADDPOP_CLASS "TurboGrabAddWnd"
 #define SETPOP_CLASS "TurboGrabSetWnd"
@@ -42,7 +44,7 @@
 #define IDC_DELETE  205
 #define IDC_FOLDER  206
 #define IDC_SET     207
-#define IDC_STATUS  208
+#define IDC_BROWSERS 208
 
 /* add-url popup ids */
 #define IDC_AURL    301
@@ -64,6 +66,15 @@
 #define IDC_SPORT    410
 #define IDC_STOKEN   411
 #define IDC_SCOPYTOK 412
+
+/* browser-extension window ids */
+#define BRW_CLASS   "TurboGrabBrwWnd"
+#define IDC_BALL    451
+#define IDC_BCLOSE  452
+#define IDC_BREG(i) (455 + (i))    /* register button per browser row   */
+#define IDC_BNAME(i) (465 + (i))   /* browser name static               */
+#define IDC_BSTAT(i) (475 + (i))   /* browser status static             */
+#define IDC_BNOROWS 485            /* "no browsers found" note          */
 
 /* tray / context menu ids */
 #define IDM_SHOW     501
@@ -130,10 +141,11 @@ typedef struct {
 
 static Settings g_set = { 8, 3, "", 1, 1 };
 
-static HWND  g_hMain, g_hList, g_hStatus;
-static HWND  g_hAddWnd, g_hSetWnd;
+static HWND  g_hMain, g_hList;
+static HWND  g_hAddWnd, g_hSetWnd, g_hBrowsWnd;
 static HFONT g_hFont, g_hFontB;
 static HICON g_hIcon;
+static HBRUSH g_hBrBg, g_hBrEdit;
 
 static Job  *g_jobs = NULL;
 static int   g_count = 0;
@@ -149,6 +161,10 @@ static char  g_clipLast[2048];
 static int  g_browserOn   = 1;
 static int  g_browserPort = 8777;
 static char g_browserToken[64] = "";
+
+/* status strip (painted by the main window) */
+static int  g_statActive, g_statQueued, g_statDone;
+static char g_statSpeed[48] = "";
 
 /* ---- forward declarations ---- */
 static void KickQueue(void);
@@ -394,6 +410,260 @@ static void BrowserSrvApply(void)
     c.port    = g_browserPort;
     c.token   = g_browserToken;
     BrowserSrvStart(&c);
+}
+
+/* ============================= dark skin engine ============================= */
+
+#define TG_BG        RGB(24, 26, 32)      /* window background            */
+#define TG_ROW1      RGB(27, 29, 36)      /* list row even                */
+#define TG_ROW2      RGB(32, 35, 43)      /* list row odd                 */
+#define TG_ROWSEL    RGB(40, 56, 90)      /* selected row                 */
+#define TG_BORDER    RGB(50, 55, 67)      /* borders / separators         */
+#define TG_HDR       RGB(24, 26, 32)      /* list header bg               */
+#define TG_TXT       RGB(232, 235, 242)   /* primary text                 */
+#define TG_TXT_DIM   RGB(152, 158, 172)   /* secondary text               */
+#define TG_TXT_MUTE  RGB(106, 112, 126)   /* muted text                   */
+#define TG_ACCENT    RGB(74, 138, 246)    /* accent blue                  */
+#define TG_GREEN     RGB(52, 199, 123)    /* completed / progress         */
+#define TG_ORANGE    RGB(242, 166, 62)    /* paused / queued              */
+#define TG_RED       RGB(236, 91, 91)     /* error                        */
+#define TG_BTN       RGB(38, 42, 51)      /* button face                  */
+#define TG_BTN_HOV   RGB(50, 56, 69)      /* button hover                 */
+#define TG_BTN_DN    RGB(28, 32, 40)      /* button pressed               */
+#define TG_BTN_PRIM  RGB(38, 62, 110)     /* primary button face          */
+#define TG_EDITBG    RGB(20, 22, 28)      /* edit box background          */
+
+static void FillSolid(HDC hdc, RECT *r, COLORREF c)
+{
+    HBRUSH b = CreateSolidBrush(c);
+    FillRect(hdc, r, b);
+    DeleteObject(b);
+}
+
+static void FillRoundRect(HDC hdc, RECT *r, int rad, COLORREF c, COLORREF border)
+{
+    HBRUSH b = CreateSolidBrush(c);
+    HPEN   p = CreatePen(PS_SOLID, 1, border);
+    HGDIOBJ ob = SelectObject(hdc, b), op = SelectObject(hdc, p);
+    RoundRect(hdc, r->left, r->top, r->right + 1, r->bottom + 1, rad, rad);
+    SelectObject(hdc, ob);
+    SelectObject(hdc, op);
+    DeleteObject(b);
+    DeleteObject(p);
+}
+
+/* dark title bar + rounded corners (Win10 19041+ / Win11; older: no-op) */
+static void DarkTitle(HWND hw)
+{
+    typedef HRESULT (WINAPI *DwmSetAttrFn)(HWND, DWORD, LPCVOID, DWORD);
+    HMODULE m = LoadLibraryA("dwmapi.dll");
+    DwmSetAttrFn f;
+    BOOL on = TRUE;
+    DWORD pref = 2;   /* DWMWCP_ROUND */
+
+    if (!m) return;
+    f = (DwmSetAttrFn)GetProcAddress(m, "DwmSetWindowAttribute");
+    if (f) {
+        f(hw, 20, &on, sizeof(on));      /* DWMWA_USE_IMMERSIVE_DARK_MODE */
+        f(hw, 33, &pref, sizeof(pref));  /* DWMWA_WINDOW_CORNER_PREFERENCE */
+    }
+    FreeLibrary(m);
+}
+
+static HBRUSH SkinBgBrush(void)
+{
+    if (!g_hBrBg) g_hBrBg = CreateSolidBrush(TG_BG);
+    return g_hBrBg;
+}
+
+static HBRUSH SkinEditBrush(void)
+{
+    if (!g_hBrEdit) g_hBrEdit = CreateSolidBrush(TG_EDITBG);
+    return g_hBrEdit;
+}
+
+/* --------------- skinned owner-draw buttons --------------- */
+
+static int GlyphForId(int id)
+{
+    switch (id) {
+    case IDC_ADD:      return 0;   /* plus     */
+    case IDC_RESUME:   return 1;   /* play     */
+    case IDC_ASTART:   return 1;   /* play     */
+    case IDC_PAUSE:    return 2;   /* pause    */
+    case IDC_DELETE:   return 3;   /* x        */
+    case IDC_FOLDER:   return 4;   /* folder   */
+    case IDC_BROWSERS: return 5;   /* globe    */
+    case IDC_SET:      return 6;   /* sliders  */
+    case IDC_BALL:     return 0;   /* plus     */
+    }
+    return -1;                     /* text only */
+}
+
+static int IsPrimaryBtn(int id)
+{
+    return id == IDC_ASTART || id == IDC_SSAVE || id == IDC_BALL;
+}
+
+static void DrawGlyph(HDC hdc, RECT *box, int id, COLORREF c)
+{
+    HPEN   pen = CreatePen(PS_SOLID, 2, c);
+    HBRUSH br  = CreateSolidBrush(c);
+    HGDIOBJ op = SelectObject(hdc, pen);
+    HGDIOBJ ob = SelectObject(hdc, br);
+    int cx = (box->left + box->right) / 2;
+    int cy = (box->top + box->bottom) / 2;
+
+    switch (id) {
+    case 0:                                   /* plus */
+        MoveToEx(hdc, cx - 6, cy, NULL); LineTo(hdc, cx + 6, cy);
+        MoveToEx(hdc, cx, cy - 6, NULL); LineTo(hdc, cx, cy + 6);
+        break;
+    case 1: {                                 /* play */
+        POINT t[3] = { { cx - 4, cy - 7 }, { cx - 4, cy + 7 }, { cx + 8, cy } };
+        Polygon(hdc, t, 3);
+        break; }
+    case 2:                                   /* pause */
+        Rectangle(hdc, cx - 6, cy - 7, cx - 2, cy + 7);
+        Rectangle(hdc, cx + 2, cy - 7, cx + 6, cy + 7);
+        break;
+    case 3:                                   /* x */
+        MoveToEx(hdc, cx - 5, cy - 5, NULL); LineTo(hdc, cx + 5, cy + 5);
+        MoveToEx(hdc, cx + 5, cy - 5, NULL); LineTo(hdc, cx - 5, cy + 5);
+        break;
+    case 4:                                   /* folder (outline) */
+        SelectObject(hdc, GetStockObject(NULL_BRUSH));
+        MoveToEx(hdc, cx - 8, cy + 5, NULL);
+        LineTo(hdc, cx - 8, cy - 4); LineTo(hdc, cx - 3, cy - 4);
+        LineTo(hdc, cx - 1, cy - 2); LineTo(hdc, cx + 8, cy - 2);
+        LineTo(hdc, cx + 8, cy + 5); LineTo(hdc, cx - 8, cy + 5);
+        break;
+    case 5:                                   /* globe (outline) */
+        SelectObject(hdc, GetStockObject(NULL_BRUSH));
+        Ellipse(hdc, cx - 7, cy - 7, cx + 7, cy + 7);
+        MoveToEx(hdc, cx, cy - 7, NULL); LineTo(hdc, cx, cy + 7);
+        MoveToEx(hdc, cx - 6, cy - 2, NULL); LineTo(hdc, cx + 6, cy - 2);
+        MoveToEx(hdc, cx - 6, cy + 2, NULL); LineTo(hdc, cx + 6, cy + 2);
+        break;
+    case 6:                                   /* sliders */
+        Rectangle(hdc, cx - 8, cy - 6, cx + 8, cy - 4);
+        Rectangle(hdc, cx - 8, cy - 1, cx + 8, cy + 1);
+        Rectangle(hdc, cx - 8, cy + 4, cx + 8, cy + 6);
+        SelectObject(hdc, br);
+        Ellipse(hdc, cx - 3, cy - 8, cx + 3, cy - 2);
+        Ellipse(hdc, cx + 3, cy - 3, cx + 9, cy + 3);
+        Ellipse(hdc, cx - 5, cy + 2, cx + 1, cy + 8);
+        break;
+    }
+    SelectObject(hdc, ob);
+    SelectObject(hdc, op);
+    DeleteObject(pen);
+    DeleteObject(br);
+}
+
+static void SkinDrawBtn(const DRAWITEMSTRUCT *di)
+{
+    HDC    hdc = di->hDC;
+    RECT   rc = di->rcItem;
+    char   txt[96];
+    int    glyph = GlyphForId((int)di->CtlID);
+    int    hover = (int)GetWindowLongPtrA(di->hwndItem, GWLP_USERDATA);
+    int    down  = (di->itemState & ODS_SELECTED) != 0;
+    int    prim  = IsPrimaryBtn((int)di->CtlID);
+    COLORREF face = down ? TG_BTN_DN : (hover ? TG_BTN_HOV : (prim ? TG_BTN_PRIM : TG_BTN));
+    COLORREF edge = prim ? TG_ACCENT : TG_BORDER;
+    SIZE   tsz;
+    int    total, x0, cy;
+    HGDIOBJ of;
+    RECT   tr;
+
+    GetWindowTextA(di->hwndItem, txt, sizeof(txt));
+    of = SelectObject(hdc, g_hFont);
+    GetTextExtentPoint32A(hdc, txt, (int)strlen(txt), &tsz);
+    total = tsz.cx + ((glyph >= 0 && txt[0]) ? 22 : 0);
+    x0 = rc.left + ((rc.right - rc.left) - total) / 2;
+    cy = (rc.top + rc.bottom) / 2;
+
+    FillRoundRect(hdc, &rc, 9, face, edge);
+    SetBkMode(hdc, TRANSPARENT);
+    SetTextColor(hdc, (di->itemState & ODS_DISABLED) ? TG_TXT_MUTE : TG_TXT);
+
+    if (glyph >= 0) {
+        RECT gb = { x0, cy - 8, x0 + 16, cy + 8 };
+        DrawGlyph(hdc, &gb, glyph, TG_TXT);
+    }
+    if (txt[0]) {
+        tr = rc;
+        tr.left  = x0 + (glyph >= 0 ? 22 : 0);
+        tr.right = tr.left + tsz.cx + 2;
+        DrawTextA(hdc, txt, -1, &tr, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+    }
+    SelectObject(hdc, of);
+}
+
+/* hover tracking for the skinned buttons — classic subclassing (no comctl32
+ * v6 dependency; SetWindowSubclass would need a v6 manifest) */
+static WNDPROC s_btnOld = NULL;
+
+static LRESULT CALLBACK SkinBtnProc(HWND hw, UINT msg, WPARAM wp, LPARAM lp)
+{
+    switch (msg) {
+    case WM_MOUSEMOVE:
+        if (!GetWindowLongPtrA(hw, GWLP_USERDATA)) {
+            SetWindowLongPtrA(hw, GWLP_USERDATA, 1);
+            InvalidateRect(hw, NULL, FALSE);
+            {
+                TRACKMOUSEEVENT t;
+                t.cbSize = sizeof(t);
+                t.dwFlags = TME_LEAVE;
+                t.hwndTrack = hw;
+                TrackMouseEvent(&t);
+            }
+        }
+        break;
+    case WM_MOUSELEAVE:
+        SetWindowLongPtrA(hw, GWLP_USERDATA, 0);
+        InvalidateRect(hw, NULL, FALSE);
+        break;
+    }
+    return CallWindowProcA(s_btnOld, hw, msg, wp, lp);
+}
+
+static HWND SkinBtn(HWND parent, HINSTANCE h, int id, const char *text,
+                    int x, int y, int w, int hgt)
+{
+    HWND b = CreateWindowA("BUTTON", text,
+        WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_OWNERDRAW,
+        x, y, w, hgt, parent, (HMENU)(INT_PTR)id, h, NULL);
+    SendMessageA(b, WM_SETFONT, (WPARAM)g_hFont, TRUE);
+    if (!s_btnOld) s_btnOld = (WNDPROC)GetWindowLongPtrA(b, GWLP_WNDPROC);
+    SetWindowLongPtrA(b, GWLP_WNDPROC, (LONG_PTR)SkinBtnProc);
+    SetWindowLongPtrA(b, GWLP_USERDATA, 0);
+    return b;
+}
+
+/* --------------- list view: empty-state text --------------- */
+
+static WNDPROC s_listOld = NULL;
+
+static LRESULT CALLBACK ListProc(HWND hw, UINT msg, WPARAM wp, LPARAM lp)
+{
+    LRESULT res = CallWindowProcA(s_listOld, hw, msg, wp, lp);
+    if (msg == WM_PAINT && ListView_GetItemCount(hw) == 0) {
+        HDC  hdc = GetDC(hw);
+        RECT rc;
+        GetClientRect(hw, &rc);
+        SetBkMode(hdc, TRANSPARENT);
+        SetTextColor(hdc, TG_TXT_MUTE);
+        SelectObject(hdc, g_hFont);
+        DrawTextA(hdc,
+            "No downloads yet.\r\n\r\n"
+            "Click \x93Add URL\x94 above, or just copy a download link in your\r\n"
+            "browser \x97 TurboGrab catches it automatically.",
+            -1, &rc, DT_CENTER | DT_VCENTER | DT_WORDBREAK);
+        ReleaseDC(hw, hdc);
+    }
+    return res;
 }
 
 /* ============================= job list ============================= */
@@ -1145,7 +1415,7 @@ static void UpdateStatusLine(void)
     int active = 0, queued = 0, done = 0;
     DWORD64 speed = 0;
     Job *j;
-    char sb[64], text[512];
+    char sb[48];
 
     EnterCriticalSection(&g_cs);
     for (j = g_jobs; j; j = j->next) {
@@ -1157,12 +1427,14 @@ static void UpdateStatusLine(void)
     if (speed > 0) {
         FormatSize(speed, sb, sizeof(sb));
         lstrcatA(sb, "/s");
-        sprintf(text, "Active: %d   Speed: %s   Queued: %d   Completed: %d",
-                active, sb, queued, done);
     } else {
-        sprintf(text, "Active: %d   Queued: %d   Completed: %d", active, queued, done);
+        lstrcpynA(sb, "", sizeof(sb));
     }
-    SetWindowTextA(g_hStatus, text);
+    g_statActive = active;
+    g_statQueued = queued;
+    g_statDone   = done;
+    lstrcpynA(g_statSpeed, sb, sizeof(g_statSpeed));
+    if (g_hMain) InvalidateRect(g_hMain, NULL, TRUE);
 }
 
 static Job *SelectedJob(void)
@@ -1238,26 +1510,47 @@ static LRESULT CALLBACK AddWndProc(HWND hw, UINT msg, WPARAM wp, LPARAM lp)
         HINSTANCE h = ((LPCREATESTRUCTA)lp)->hInstance;
         HWND c;
 
-        CreateWindowA("STATIC", "URL:", WS_CHILD | WS_VISIBLE,
-            12, 14, 60, 18, hw, NULL, h, NULL);
+        CreateWindowA("STATIC", "Download link (URL):", WS_CHILD | WS_VISIBLE,
+            14, 14, 180, 18, hw, NULL, h, NULL);
         c = CreateWindowA("EDIT", "", WS_CHILD | WS_VISIBLE | WS_BORDER | ES_AUTOHSCROLL,
-            12, 34, 500, 24, hw, (HMENU)IDC_AURL, h, NULL);
+            14, 36, 500, 26, hw, (HMENU)IDC_AURL, h, NULL);
         SendMessageA(c, WM_SETFONT, (WPARAM)g_hFont, TRUE);
 
         CreateWindowA("STATIC", "Save to:", WS_CHILD | WS_VISIBLE,
-            12, 68, 60, 18, hw, NULL, h, NULL);
+            14, 74, 80, 18, hw, NULL, h, NULL);
         c = CreateWindowA("EDIT", g_set.dir, WS_CHILD | WS_VISIBLE | WS_BORDER | ES_AUTOHSCROLL,
-            12, 88, 380, 24, hw, (HMENU)IDC_ADIR, h, NULL);
+            14, 96, 390, 26, hw, (HMENU)IDC_ADIR, h, NULL);
         SendMessageA(c, WM_SETFONT, (WPARAM)g_hFont, TRUE);
-        CreateWindowA("BUTTON", "Browse...", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
-            402, 86, 110, 27, hw, (HMENU)IDC_ABROWSE, h, NULL);
+        SkinBtn(hw, h, IDC_ABROWSE, "Browse...", 414, 94, 100, 30);
 
-        CreateWindowA("BUTTON", "Start Download", WS_CHILD | WS_VISIBLE | BS_DEFPUSHBUTTON,
-            12, 128, 130, 30, hw, (HMENU)IDC_ASTART, h, NULL);
-        CreateWindowA("BUTTON", "Cancel", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
-            152, 128, 80, 30, hw, (HMENU)IDC_ACANCEL, h, NULL);
+        SkinBtn(hw, h, IDC_ASTART, "Start Download", 14, 138, 140, 34);
+        SkinBtn(hw, h, IDC_ACANCEL, "Cancel", 164, 138, 84, 34);
+        DarkTitle(hw);
         return 0;
     }
+    case WM_ERASEBKGND: {
+        HDC hdc = (HDC)wp;
+        RECT rc;
+        GetClientRect(hw, &rc);
+        FillSolid(hdc, &rc, TG_BG);
+        return 1;
+    }
+    case WM_CTLCOLOREDIT: {
+        HDC hdc = (HDC)wp;
+        SetBkColor(hdc, TG_EDITBG);
+        SetTextColor(hdc, TG_TXT);
+        return (LRESULT)SkinEditBrush();
+    }
+    case WM_CTLCOLORSTATIC: {
+        HDC hdc = (HDC)wp;
+        HWND ch = (HWND)lp;
+        SetBkMode(hdc, TRANSPARENT);
+        SetTextColor(hdc, GetDlgCtrlID(ch) == IDC_STOKEN ? TG_TXT : TG_TXT_DIM);
+        return (LRESULT)SkinBgBrush();
+    }
+    case WM_DRAWITEM:
+        SkinDrawBtn((const DRAWITEMSTRUCT *)lp);
+        return TRUE;
     case WM_COMMAND:
         switch (LOWORD(wp)) {
         case IDC_ASTART:  AddPopupStart(hw); return 0;
@@ -1284,7 +1577,7 @@ static void OpenAddPopup(const char *prefill)
     GetWindowRect(g_hMain, &r);
     g_hAddWnd = CreateWindowA(ADDPOP_CLASS, "Add download - TurboGrab",
         WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU,
-        r.left + 60, r.top + 80, 540, 205, g_hMain, NULL,
+        r.left + 60, r.top + 80, 540, 215, g_hMain, NULL,
         (HINSTANCE)GetWindowLongPtrA(g_hMain, GWLP_HINSTANCE), NULL);
     if (g_hAddWnd) {
         if (prefill) SetWindowTextA(GetDlgItem(g_hAddWnd, IDC_AURL), prefill);
@@ -1346,67 +1639,93 @@ static LRESULT CALLBACK SetWndProc(HWND hw, UINT msg, WPARAM wp, LPARAM lp)
         char b[16];
 
         CreateWindowA("STATIC", "Segments per download (1-16):", WS_CHILD | WS_VISIBLE,
-            12, 14, 220, 18, hw, NULL, h, NULL);
+            14, 16, 230, 18, hw, NULL, h, NULL);
         sprintf(b, "%d", g_set.segments);
         c = CreateWindowA("EDIT", b, WS_CHILD | WS_VISIBLE | WS_BORDER | ES_AUTOHSCROLL,
-            250, 12, 60, 24, hw, (HMENU)IDC_SSEG, h, NULL);
+            260, 14, 70, 26, hw, (HMENU)IDC_SSEG, h, NULL);
         SendMessageA(c, WM_SETFONT, (WPARAM)g_hFont, TRUE);
 
         CreateWindowA("STATIC", "Downloads at the same time (1-10):", WS_CHILD | WS_VISIBLE,
-            12, 46, 220, 18, hw, NULL, h, NULL);
+            14, 50, 230, 18, hw, NULL, h, NULL);
         sprintf(b, "%d", g_set.concurrent);
         c = CreateWindowA("EDIT", b, WS_CHILD | WS_VISIBLE | WS_BORDER | ES_AUTOHSCROLL,
-            250, 44, 60, 24, hw, (HMENU)IDC_SCON, h, NULL);
+            260, 48, 70, 26, hw, (HMENU)IDC_SCON, h, NULL);
         SendMessageA(c, WM_SETFONT, (WPARAM)g_hFont, TRUE);
 
         CreateWindowA("STATIC", "Default download folder:", WS_CHILD | WS_VISIBLE,
-            12, 82, 220, 18, hw, NULL, h, NULL);
+            14, 86, 220, 18, hw, NULL, h, NULL);
         c = CreateWindowA("EDIT", g_set.dir, WS_CHILD | WS_VISIBLE | WS_BORDER | ES_AUTOHSCROLL,
-            12, 102, 330, 24, hw, (HMENU)IDC_SDIR, h, NULL);
+            14, 108, 330, 26, hw, (HMENU)IDC_SDIR, h, NULL);
         SendMessageA(c, WM_SETFONT, (WPARAM)g_hFont, TRUE);
-        CreateWindowA("BUTTON", "Browse...", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
-            352, 100, 110, 27, hw, (HMENU)IDC_SBROWSE, h, NULL);
+        SkinBtn(hw, h, IDC_SBROWSE, "Browse...", 354, 106, 100, 30);
 
         c = CreateWindowA("BUTTON", "Watch clipboard for download links",
             WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX,
-            12, 142, 320, 22, hw, (HMENU)IDC_SCLIP, h, NULL);
+            14, 148, 330, 22, hw, (HMENU)IDC_SCLIP, h, NULL);
         SendMessageA(c, BM_SETCHECK, g_set.clipboard ? BST_CHECKED : BST_UNCHECKED, 0);
         SendMessageA(c, WM_SETFONT, (WPARAM)g_hFont, TRUE);
         c = CreateWindowA("BUTTON", "Sort files into category folders",
             WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX,
-            12, 168, 320, 22, hw, (HMENU)IDC_SCAT, h, NULL);
+            14, 174, 330, 22, hw, (HMENU)IDC_SCAT, h, NULL);
         SendMessageA(c, BM_SETCHECK, g_set.categories ? BST_CHECKED : BST_UNCHECKED, 0);
         SendMessageA(c, WM_SETFONT, (WPARAM)g_hFont, TRUE);
 
         /* browser extension integration */
         c = CreateWindowA("BUTTON", "Browser extension integration (localhost server)",
             WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX,
-            12, 200, 340, 22, hw, (HMENU)IDC_SBROWSER, h, NULL);
+            14, 206, 340, 22, hw, (HMENU)IDC_SBROWSER, h, NULL);
         SendMessageA(c, BM_SETCHECK, g_browserOn ? BST_CHECKED : BST_UNCHECKED, 0);
         SendMessageA(c, WM_SETFONT, (WPARAM)g_hFont, TRUE);
 
         CreateWindowA("STATIC", "Server port:", WS_CHILD | WS_VISIBLE,
-            12, 232, 90, 18, hw, NULL, h, NULL);
+            14, 240, 90, 18, hw, NULL, h, NULL);
         sprintf(b, "%d", g_browserPort);
         c = CreateWindowA("EDIT", b, WS_CHILD | WS_VISIBLE | WS_BORDER | ES_AUTOHSCROLL,
-            108, 230, 60, 24, hw, (HMENU)IDC_SPORT, h, NULL);
+            110, 238, 70, 26, hw, (HMENU)IDC_SPORT, h, NULL);
         SendMessageA(c, WM_SETFONT, (WPARAM)g_hFont, TRUE);
 
         CreateWindowA("STATIC", "Extension token (paste into the extension options):",
-            WS_CHILD | WS_VISIBLE, 12, 262, 340, 18, hw, NULL, h, NULL);
+            WS_CHILD | WS_VISIBLE, 14, 272, 360, 18, hw, NULL, h, NULL);
         c = CreateWindowA("EDIT", g_browserToken,
             WS_CHILD | WS_VISIBLE | WS_BORDER | ES_AUTOHSCROLL | ES_READONLY,
-            12, 282, 330, 24, hw, (HMENU)IDC_STOKEN, h, NULL);
+            14, 294, 330, 26, hw, (HMENU)IDC_STOKEN, h, NULL);
         SendMessageA(c, WM_SETFONT, (WPARAM)g_hFont, TRUE);
-        CreateWindowA("BUTTON", "Copy token", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
-            352, 280, 110, 27, hw, (HMENU)IDC_SCOPYTOK, h, NULL);
+        SkinBtn(hw, h, IDC_SCOPYTOK, "Copy token", 354, 292, 100, 30);
 
-        CreateWindowA("BUTTON", "Save", WS_CHILD | WS_VISIBLE | BS_DEFPUSHBUTTON,
-            12, 322, 90, 30, hw, (HMENU)IDC_SSAVE, h, NULL);
-        CreateWindowA("BUTTON", "Close", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
-            112, 322, 90, 30, hw, (HMENU)IDC_SCLOSE, h, NULL);
+        SkinBtn(hw, h, IDC_SSAVE, "Save", 14, 336, 92, 34);
+        SkinBtn(hw, h, IDC_SCLOSE, "Close", 116, 336, 84, 34);
+        DarkTitle(hw);
         return 0;
     }
+    case WM_ERASEBKGND: {
+        HDC hdc = (HDC)wp;
+        RECT rc;
+        GetClientRect(hw, &rc);
+        FillSolid(hdc, &rc, TG_BG);
+        return 1;
+    }
+    case WM_CTLCOLORBTN: {
+        HDC hdc = (HDC)wp;
+        SetBkMode(hdc, TRANSPARENT);
+        SetTextColor(hdc, TG_TXT);
+        return (LRESULT)SkinBgBrush();
+    }
+    case WM_CTLCOLOREDIT: {
+        HDC hdc = (HDC)wp;
+        SetBkColor(hdc, TG_EDITBG);
+        SetTextColor(hdc, TG_TXT);
+        return (LRESULT)SkinEditBrush();
+    }
+    case WM_CTLCOLORSTATIC: {
+        HDC hdc = (HDC)wp;
+        HWND ch = (HWND)lp;
+        SetBkMode(hdc, TRANSPARENT);
+        SetTextColor(hdc, GetDlgCtrlID(ch) == IDC_STOKEN ? TG_TXT : TG_TXT_DIM);
+        return (LRESULT)SkinBgBrush();
+    }
+    case WM_DRAWITEM:
+        SkinDrawBtn((const DRAWITEMSTRUCT *)lp);
+        return TRUE;
     case WM_COMMAND:
         switch (LOWORD(wp)) {
         case IDC_SSAVE:   SettingsSave(hw); return 0;
@@ -1444,11 +1763,182 @@ static void OpenSetPopup(void)
     GetWindowRect(g_hMain, &r);
     g_hSetWnd = CreateWindowA(SETPOP_CLASS, "TurboGrab settings",
         WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU,
-        r.left + 80, r.top + 40, 500, 400, g_hMain, NULL,
+        r.left + 80, r.top + 40, 500, 432, g_hMain, NULL,
         (HINSTANCE)GetWindowLongPtrA(g_hMain, GWLP_HINSTANCE), NULL);
     if (g_hSetWnd) {
         ShowWindow(g_hSetWnd, SW_SHOW);
         SetForegroundWindow(g_hSetWnd);
+    } else {
+        EnableWindow(g_hMain, TRUE);
+    }
+}
+
+/* ============================= browsers window ============================= */
+
+static TgBrowser g_br[TG_MAX_BROWSERS];
+static int       g_brN = 0;
+
+static void BrowsersRowUpdate(HWND hw, int i)
+{
+    char s[128];
+    HWND st = GetDlgItem(hw, IDC_BSTAT(i));
+    if (!st) return;
+    if (g_br[i].registered)
+        lstrcpynA(s, "Registered \x97 restart this browser once to finish", sizeof(s));
+    else
+        lstrcpynA(s, "Not registered yet", sizeof(s));
+    SetWindowTextA(st, s);
+    InvalidateRect(st, NULL, TRUE);
+    {
+        HWND b = GetDlgItem(hw, IDC_BREG(i));
+        if (b) {
+            SetWindowTextA(b, g_br[i].registered ? "Repair" : "Register");
+            InvalidateRect(b, NULL, TRUE);
+        }
+    }
+}
+
+static void BrowsersRescan(HWND hw)
+{
+    int i;
+    g_brN = BrowsersScan(g_br, TG_MAX_BROWSERS);
+    for (i = 0; i < TG_MAX_BROWSERS; i++) {
+        ShowWindow(GetDlgItem(hw, IDC_BNAME(i)), (i < g_brN) ? SW_SHOW : SW_HIDE);
+        ShowWindow(GetDlgItem(hw, IDC_BSTAT(i)), (i < g_brN) ? SW_SHOW : SW_HIDE);
+        ShowWindow(GetDlgItem(hw, IDC_BREG(i)),  (i < g_brN) ? SW_SHOW : SW_HIDE);
+        if (i < g_brN) {
+            SetWindowTextA(GetDlgItem(hw, IDC_BNAME(i)), g_br[i].name);
+            BrowsersRowUpdate(hw, i);
+        }
+    }
+    ShowWindow(GetDlgItem(hw, IDC_BNOROWS), g_brN ? SW_HIDE : SW_SHOW);
+}
+
+static void BrowsersAfterApply(HWND hw)
+{
+    int i;
+    /* rescan to refresh registered flags from the registry */
+    g_brN = BrowsersScan(g_br, TG_MAX_BROWSERS);
+    for (i = 0; i < g_brN; i++) BrowsersRowUpdate(hw, i);
+}
+
+static LRESULT CALLBACK BrowsWndProc(HWND hw, UINT msg, WPARAM wp, LPARAM lp)
+{
+    switch (msg) {
+    case WM_CREATE: {
+        HINSTANCE h = ((LPCREATESTRUCTA)lp)->hInstance;
+        int i;
+        HWND c;
+
+        c = CreateWindowA("STATIC",
+            "The TurboGrab Integration extension sends download links from your browser "
+            "straight into TurboGrab. TurboGrab registers it for every browser below "
+            "automatically. If a browser still shows \x93Not registered\x94, click Register, "
+            "then fully close and reopen that browser.",
+            WS_CHILD | WS_VISIBLE, 16, 14, 520, 66, hw, NULL, h, NULL);
+        SendMessageA(c, WM_SETFONT, (WPARAM)g_hFont, TRUE);
+
+        for (i = 0; i < TG_MAX_BROWSERS; i++) {
+            int y = 92 + i * 36;
+            c = CreateWindowA("STATIC", "", WS_CHILD,
+                16, y, 150, 20, hw, (HMENU)(INT_PTR)IDC_BNAME(i), h, NULL);
+            SendMessageA(c, WM_SETFONT, (WPARAM)g_hFontB, TRUE);
+            c = CreateWindowA("STATIC", "", WS_CHILD,
+                174, y, 280, 20, hw, (HMENU)(INT_PTR)IDC_BSTAT(i), h, NULL);
+            SendMessageA(c, WM_SETFONT, (WPARAM)g_hFont, TRUE);
+            SkinBtn(hw, h, IDC_BREG(i), "Register", 462, y - 4, 92, 28);
+        }
+
+        c = CreateWindowA("STATIC", "No supported browsers were found on this PC.",
+            WS_CHILD, 16, 100, 400, 20, hw, (HMENU)(INT_PTR)IDC_BNOROWS, h, NULL);
+        SendMessageA(c, WM_SETFONT, (WPARAM)g_hFont, TRUE);
+
+        SkinBtn(hw, h, IDC_BALL,   "Register / Repair all", 16, 396, 170, 34);
+        SkinBtn(hw, h, IDC_BCLOSE, "Close", 536 - 100, 396, 84, 34);
+        DarkTitle(hw);
+        BrowsersRescan(hw);
+        return 0;
+    }
+    case WM_ERASEBKGND: {
+        HDC hdc = (HDC)wp;
+        RECT rc;
+        GetClientRect(hw, &rc);
+        FillSolid(hdc, &rc, TG_BG);
+        return 1;
+    }
+    case WM_CTLCOLOREDIT:
+        SetBkColor((HDC)wp, TG_EDITBG);
+        SetTextColor((HDC)wp, TG_TXT);
+        return (LRESULT)SkinEditBrush();
+    case WM_CTLCOLORSTATIC: {
+        HDC hdc = (HDC)wp;
+        int id = GetDlgCtrlID((HWND)lp);
+        SetBkMode(hdc, TRANSPARENT);
+        if (id >= IDC_BSTAT(0) && id < IDC_BSTAT(TG_MAX_BROWSERS)) {
+            int i = id - IDC_BSTAT(0);
+            SetTextColor(hdc, (i < g_brN && g_br[i].registered) ? TG_GREEN : TG_ORANGE);
+        } else if (id >= IDC_BNAME(0) && id < IDC_BNAME(TG_MAX_BROWSERS)) {
+            SetTextColor(hdc, TG_TXT);
+        } else if (id == IDC_BNOROWS) {
+            SetTextColor(hdc, TG_TXT_MUTE);
+        } else {
+            SetTextColor(hdc, TG_TXT_DIM);
+        }
+        return (LRESULT)SkinBgBrush();
+    }
+    case WM_DRAWITEM:
+        SkinDrawBtn((const DRAWITEMSTRUCT *)lp);
+        return TRUE;
+    case WM_COMMAND: {
+        int id = LOWORD(wp);
+        if (id == IDC_BCLOSE) { PopupClose(hw, &g_hBrowsWnd); return 0; }
+        if (id == IDC_BALL) {
+            int n = BrowsersApplyAll();
+            BrowsersAfterApply(hw);
+            { char m[160];
+              sprintf(m, "%d browser(s) registered.\n\nFully close and reopen each browser "
+                         "(check the tray too) \x97 the extension appears on its own.", n);
+              MessageBoxA(hw, m, APP_TITLE, MB_ICONINFORMATION); }
+            return 0;
+        }
+        if (id >= IDC_BREG(0) && id < IDC_BREG(TG_MAX_BROWSERS)) {
+            int i = id - IDC_BREG(0);
+            if (i < g_brN) {
+                BrowsersApplyOne(i);
+                BrowsersAfterApply(hw);
+                if (g_br[i].registered) {
+                    MessageBoxA(hw, "Registered. Now fully close and reopen this browser "
+                                "\x97 the TurboGrab extension installs itself.",
+                                APP_TITLE, MB_ICONINFORMATION);
+                } else {
+                    MessageBoxA(hw, "Could not write the browser policy.",
+                                APP_TITLE, MB_ICONEXCLAMATION);
+                }
+            }
+            return 0;
+        }
+        break;
+    }
+    case WM_CLOSE:
+        PopupClose(hw, &g_hBrowsWnd);
+        return 0;
+    }
+    return DefWindowProcA(hw, msg, wp, lp);
+}
+
+static void OpenBrowsersPopup(void)
+{
+    RECT r;
+    if (g_hBrowsWnd) { SetForegroundWindow(g_hBrowsWnd); return; }
+    EnableWindow(g_hMain, FALSE);
+    GetWindowRect(g_hMain, &r);
+    g_hBrowsWnd = CreateWindowA(BRW_CLASS, "Browser extension \x96 TurboGrab",
+        WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU,
+        r.left + 40, r.top + 40, 552, 480, g_hMain, NULL,
+        (HINSTANCE)GetWindowLongPtrA(g_hMain, GWLP_HINSTANCE), NULL);
+    if (g_hBrowsWnd) {
+        ShowWindow(g_hBrowsWnd, SW_SHOW);
+        SetForegroundWindow(g_hBrowsWnd);
     } else {
         EnableWindow(g_hMain, TRUE);
     }
@@ -1612,37 +2102,34 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     switch (msg) {
     case WM_CREATE: {
         HINSTANCE h = ((LPCREATESTRUCTA)lp)->hInstance;
-        HWND b;
         LVCOLUMNA lvc;
-        Job *j;
-        int i, n;
+        HIMAGELIST il;
+        int i;
         static const char *cols[7] = { "File", "Size", "Progress", "Speed", "Time left", "Status", "Save to" };
-        static const int colw[7] = { 200, 84, 150, 92, 84, 150, 190 };
+        static const int colw[7] = { 260, 88, 190, 100, 96, 220, 240 };
 
-        b = CreateWindowA("BUTTON", "Add URL", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
-            12, 12, 96, 30, hwnd, (HMENU)IDC_ADD, h, NULL);
-        SendMessageA(b, WM_SETFONT, (WPARAM)g_hFont, TRUE);
-        b = CreateWindowA("BUTTON", "Resume", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
-            114, 12, 86, 30, hwnd, (HMENU)IDC_RESUME, h, NULL);
-        SendMessageA(b, WM_SETFONT, (WPARAM)g_hFont, TRUE);
-        b = CreateWindowA("BUTTON", "Pause", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
-            206, 12, 86, 30, hwnd, (HMENU)IDC_PAUSE, h, NULL);
-        SendMessageA(b, WM_SETFONT, (WPARAM)g_hFont, TRUE);
-        b = CreateWindowA("BUTTON", "Delete", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
-            298, 12, 86, 30, hwnd, (HMENU)IDC_DELETE, h, NULL);
-        SendMessageA(b, WM_SETFONT, (WPARAM)g_hFont, TRUE);
-        b = CreateWindowA("BUTTON", "Open Folder", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
-            390, 12, 106, 30, hwnd, (HMENU)IDC_FOLDER, h, NULL);
-        SendMessageA(b, WM_SETFONT, (WPARAM)g_hFont, TRUE);
-        b = CreateWindowA("BUTTON", "Settings", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
-            502, 12, 86, 30, hwnd, (HMENU)IDC_SET, h, NULL);
-        SendMessageA(b, WM_SETFONT, (WPARAM)g_hFont, TRUE);
+        SkinBtn(hwnd, h, IDC_ADD,     "Add URL",      12, 12, 104, 36);
+        SkinBtn(hwnd, h, IDC_RESUME,  "Resume",       122, 12,  96, 36);
+        SkinBtn(hwnd, h, IDC_PAUSE,   "Pause",        224, 12,  88, 36);
+        SkinBtn(hwnd, h, IDC_DELETE,  "Delete",       318, 12,  88, 36);
+        SkinBtn(hwnd, h, IDC_FOLDER,  "Open Folder",  412, 12, 116, 36);
+        SkinBtn(hwnd, h, IDC_BROWSERS,"Browsers",     534, 12, 100, 36);
+        SkinBtn(hwnd, h, IDC_SET,     "Settings",     640, 12,  98, 36);
 
         g_hList = CreateWindowA(WC_LISTVIEWA, "",
-            WS_CHILD | WS_VISIBLE | WS_BORDER | WS_TABSTOP |
+            WS_CHILD | WS_VISIBLE | WS_TABSTOP |
             LVS_REPORT | LVS_SINGLESEL | LVS_SHOWSELALWAYS,
-            12, 52, 990, 420, hwnd, (HMENU)IDC_LIST, h, NULL);
-        ListView_SetExtendedListViewStyle(g_hList, LVS_EX_FULLROWSELECT | LVS_EX_GRIDLINES);
+            12, 62, 990, 424, hwnd, (HMENU)IDC_LIST, h, NULL);
+        ListView_SetExtendedListViewStyle(g_hList,
+            LVS_EX_FULLROWSELECT | LVS_EX_DOUBLEBUFFER);
+        ListView_SetBkColor(g_hList, TG_ROW1);
+        ListView_SetTextBkColor(g_hList, TG_ROW1);
+        ListView_SetTextColor(g_hList, TG_TXT);
+        il = ImageList_Create(1, 46, ILC_COLOR32, 1, 1);
+        ListView_SetImageList(g_hList, il, LVSIL_SMALL);
+        if (!s_listOld) s_listOld = (WNDPROC)GetWindowLongPtrA(g_hList, GWLP_WNDPROC);
+        SetWindowLongPtrA(g_hList, GWLP_WNDPROC, (LONG_PTR)ListProc);
+
         ZeroMemory(&lvc, sizeof(lvc));
         lvc.mask = LVCF_TEXT | LVCF_WIDTH | LVCF_SUBITEM;
         for (i = 0; i < 7; i++) {
@@ -1653,19 +2140,101 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         }
         SendMessageA(g_hList, WM_SETFONT, (WPARAM)g_hFont, TRUE);
 
-        g_hStatus = CreateWindowA("STATIC", "Ready.", WS_CHILD | WS_VISIBLE | SS_LEFT,
-            12, 0, 990, 22, hwnd, (HMENU)IDC_STATUS, h, NULL);
-        SendMessageA(g_hStatus, WM_SETFONT, (WPARAM)g_hFont, TRUE);
-
-        n = 0;
-        EnterCriticalSection(&g_cs);
-        for (j = g_jobs; j; j = j->next) n++;
-        LeaveCriticalSection(&g_cs);
-        (void)n;
         RebuildList();
 
         SetTimer(hwnd, 1, 500, NULL);
         AddClipboardFormatListener(hwnd);
+        DarkTitle(hwnd);
+        return 0;
+    }
+    case WM_GETMINMAXINFO: {
+        MINMAXINFO *mmi = (MINMAXINFO *)lp;
+        mmi->ptMinTrackSize.x = 880;
+        mmi->ptMinTrackSize.y = 540;
+        return 0;
+    }
+    case WM_ERASEBKGND: {
+        HDC hdc = (HDC)wp;
+        RECT rc;
+        GetClientRect(hwnd, &rc);
+        FillSolid(hdc, &rc, TG_BG);
+        return 1;
+    }
+    case WM_PAINT: {
+        PAINTSTRUCT ps;
+        HDC hdc = BeginPaint(hwnd, &ps);
+        RECT rc, sr, sep, tr;
+        char buf[128];
+        int x, cy;
+        SIZE tsz;
+
+        GetClientRect(hwnd, &rc);
+        sr = rc;
+        sr.top = sr.bottom - 36;
+        FillSolid(hdc, &sr, RGB(20, 22, 28));
+        sep.left = sr.left; sep.top = sr.top;
+        sep.right = sr.right; sep.bottom = sr.top + 1;
+        FillSolid(hdc, &sep, TG_BORDER);
+
+        SelectObject(hdc, g_hFont);
+        SetBkMode(hdc, TRANSPARENT);
+        cy = (sr.top + sr.bottom) / 2;
+        x = sr.left + 16;
+
+        /* Active: n */
+        SetTextColor(hdc, TG_TXT_MUTE);
+        TextOutA(hdc, x, cy - 9, "Active:", 7);
+        GetTextExtentPoint32A(hdc, "Active: ", 8, &tsz);
+        x += tsz.cx;
+        sprintf(buf, "%d", g_statActive);
+        SetTextColor(hdc, TG_ACCENT);
+        TextOutA(hdc, x, cy - 9, buf, (int)strlen(buf));
+        GetTextExtentPoint32A(hdc, buf, (int)strlen(buf), &tsz);
+        x += tsz.cx + 22;
+
+        /* Speed */
+        if (g_statSpeed[0]) {
+            SetTextColor(hdc, TG_TXT_MUTE);
+            TextOutA(hdc, x, cy - 9, "Speed:", 6);
+            GetTextExtentPoint32A(hdc, "Speed: ", 7, &tsz);
+            x += tsz.cx;
+            SetTextColor(hdc, TG_GREEN);
+            TextOutA(hdc, x, cy - 9, g_statSpeed, (int)strlen(g_statSpeed));
+            GetTextExtentPoint32A(hdc, g_statSpeed, (int)strlen(g_statSpeed), &tsz);
+            x += tsz.cx + 22;
+        }
+
+        /* Queued: n */
+        SetTextColor(hdc, TG_TXT_MUTE);
+        TextOutA(hdc, x, cy - 9, "Queued:", 7);
+        GetTextExtentPoint32A(hdc, "Queued: ", 8, &tsz);
+        x += tsz.cx;
+        sprintf(buf, "%d", g_statQueued);
+        SetTextColor(hdc, TG_ORANGE);
+        TextOutA(hdc, x, cy - 9, buf, (int)strlen(buf));
+        GetTextExtentPoint32A(hdc, buf, (int)strlen(buf), &tsz);
+        x += tsz.cx + 22;
+
+        /* Completed: n */
+        SetTextColor(hdc, TG_TXT_MUTE);
+        TextOutA(hdc, x, cy - 9, "Completed:", 10);
+        GetTextExtentPoint32A(hdc, "Completed: ", 11, &tsz);
+        x += tsz.cx;
+        sprintf(buf, "%d", g_statDone);
+        SetTextColor(hdc, TG_GREEN);
+        TextOutA(hdc, x, cy - 9, buf, (int)strlen(buf));
+
+        /* right side branding */
+        lstrcpynA(buf, "TurboGrab v1.3.0", sizeof(buf));
+        GetTextExtentPoint32A(hdc, buf, (int)strlen(buf), &tsz);
+        SetTextColor(hdc, TG_TXT_MUTE);
+        tr.left = sr.right - tsz.cx - 16;
+        tr.top = cy - 9;
+        tr.right = sr.right - 16;
+        tr.bottom = cy + 9;
+        DrawTextA(hdc, buf, -1, &tr, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+
+        EndPaint(hwnd, &ps);
         return 0;
     }
     case WM_SIZE: {
@@ -1680,8 +2249,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         hgt = HIWORD(lp);
         GetClientRect(hwnd, &rc);
         (void)rc;
-        MoveWindow(g_hList, 12, 52, w - 24, hgt - 52 - 34, TRUE);
-        MoveWindow(g_hStatus, 12, hgt - 26, w - 24, 22, TRUE);
+        MoveWindow(g_hList, 12, 62, w - 24, hgt - 62 - 42, TRUE);
         return 0;
     }
     case WM_TIMER:
@@ -1779,6 +2347,39 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         return 0;
     case WM_NOTIFY: {
         LPNMHDR nm = (LPNMHDR)lp;
+
+        /* --- dark list header (custom draw from the header child) --- */
+        if (nm->hwndFrom == ListView_GetHeader(g_hList) && nm->code == NM_CUSTOMDRAW) {
+            LPNMCUSTOMDRAW hd = (LPNMCUSTOMDRAW)nm;
+            if (hd->dwDrawStage == CDDS_PREPAINT)
+                return CDRF_NOTIFYITEMDRAW;
+            if (hd->dwDrawStage == CDDS_ITEMPREPAINT) {
+                HDC hdc = hd->hdc;
+                RECT rc = hd->rc, sep;
+                char buf[64];
+                HDITEMA hdi;
+                FillSolid(hdc, &rc, TG_HDR);
+                sep.left = rc.right - 1; sep.top = rc.top;
+                sep.right = rc.right; sep.bottom = rc.bottom;
+                FillSolid(hdc, &sep, TG_BORDER);
+                sep.left = rc.left; sep.top = rc.bottom - 1;
+                sep.right = rc.right; sep.bottom = rc.bottom;
+                FillSolid(hdc, &sep, TG_BORDER);
+                ZeroMemory(&hdi, sizeof(hdi));
+                hdi.mask = HDI_TEXT;
+                hdi.pszText = buf;
+                hdi.cchTextMax = sizeof(buf);
+                SendMessageA(hd->hdr.hwndFrom, HDM_GETITEMA, hd->dwItemSpec, (LPARAM)&hdi);
+                SetBkMode(hdc, TRANSPARENT);
+                SetTextColor(hdc, TG_TXT_MUTE);
+                SelectObject(hdc, g_hFont);
+                { RECT tr = rc; tr.left += 10; tr.right -= 8;
+                  DrawTextA(hdc, buf, -1, &tr, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX); }
+                return CDRF_SKIPDEFAULT;
+            }
+            return CDRF_DODEFAULT;
+        }
+
         if (nm->idFrom == IDC_LIST && nm->code == NM_CUSTOMDRAW) {
             LPNMLVCUSTOMDRAW cd = (LPNMLVCUSTOMDRAW)nm;
             if (cd->nmcd.dwDrawStage == CDDS_PREPAINT)
@@ -1786,52 +2387,78 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
             if (cd->nmcd.dwDrawStage == CDDS_ITEMPREPAINT)
                 return CDRF_NOTIFYSUBITEMDRAW;
             if (cd->nmcd.dwDrawStage == (CDDS_SUBITEM | CDDS_ITEMPREPAINT)) {
+                Job *j;
+                LVITEMA li;
+                HDC hdc = cd->nmcd.hdc;
+                int item = (int)cd->nmcd.dwItemSpec;
+                BOOL sel = (cd->nmcd.uItemState & CDIS_SELECTED) != 0;
+
+                ZeroMemory(&li, sizeof(li));
+                li.mask = LVIF_PARAM;
+                li.iItem = item;
+                j = NULL;
+                if (SendMessageA(g_hList, LVM_GETITEMA, 0, (LPARAM)&li))
+                    j = (Job *)li.lParam;
+
+                /* row background (once per row, on the first subitem) */
+                if (cd->iSubItem == 0) {
+                    RECT rr;
+                    ListView_GetItemRect(g_hList, item, &rr, LVIR_BOUNDS);
+                    FillSolid(hdc, &rr, sel ? TG_ROWSEL : ((item & 1) ? TG_ROW2 : TG_ROW1));
+                    if (sel) {
+                        RECT ab = { rr.left, rr.top, rr.left + 3, rr.bottom };
+                        FillSolid(hdc, &ab, TG_ACCENT);
+                    }
+                }
+                if (!j) return CDRF_SKIPDEFAULT;
+
+                SetBkMode(hdc, TRANSPARENT);
+
+                if (cd->iSubItem == 0) {
+                    /* file name: bold white */
+                    RECT rc;
+                    char disp[320];
+                    ListView_GetItemRect(g_hList, item, &rc, LVIR_BOUNDS);
+                    rc.left += 12;
+                    rc.right = rc.left + ListView_GetColumnWidth(g_hList, 0) - 22;
+                    ListView_GetItemText(g_hList, item, 0, disp, sizeof(disp));
+                    SelectObject(hdc, g_hFontB);
+                    SetTextColor(hdc, sel ? TG_TXT : TG_TXT);
+                    DrawTextA(hdc, disp, -1, &rc,
+                        DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
+                    return CDRF_SKIPDEFAULT;
+                }
                 if (cd->iSubItem == 2) {
-                    Job *j;
-                    LVITEMA li;
-                    HDC hdc = cd->nmcd.hdc;
+                    /* progress bar */
                     RECT rc, bar;
                     DWORD64 got, total;
                     int pct = -1;
                     char txt[64];
-                    HBRUSH bg, fg;
+                    COLORREF fillc;
                     SIZE tsz;
                     HGDIOBJ of;
 
-                    ZeroMemory(&li, sizeof(li));
-                    li.mask = LVIF_PARAM;
-                    li.iItem = (int)cd->nmcd.dwItemSpec;
-                    j = NULL;
-                    if (SendMessageA(g_hList, LVM_GETITEMA, 0, (LPARAM)&li))
-                        j = (Job *)li.lParam;
-                    ListView_GetSubItemRect(g_hList, (int)cd->nmcd.dwItemSpec, 2, LVIR_BOUNDS, &rc);
-                    if (!j) return CDRF_SKIPDEFAULT;
+                    ListView_GetSubItemRect(g_hList, item, 2, LVIR_BOUNDS, &rc);
                     got = (DWORD64)j->got;
                     total = j->total;
                     if (j->state == ST_DONE && total == 0) total = got;
                     if (total > 0) pct = (int)(got * 100 / total);
 
-                    bg = (cd->nmcd.uItemState & CDIS_SELECTED)
-                       ? GetSysColorBrush(COLOR_HIGHLIGHT) : GetSysColorBrush(COLOR_WINDOW);
-                    FillRect(hdc, &rc, bg);
                     bar = rc;
-                    bar.left += 4; bar.right -= 4;
-                    InflateRect(&bar, 0, -6);
-                    if (bar.bottom - bar.top > 16) {
-                        int cy = (bar.top + bar.bottom) / 2;
-                        bar.top = cy - 8;
-                        bar.bottom = cy + 8;
-                    }
-                    FillRect(hdc, &bar, GetSysColorBrush(COLOR_3DFACE));
-                    FrameRect(hdc, &bar, GetSysColorBrush(COLOR_3DSHADOW));
+                    bar.left += 6; bar.right -= 8;
+                    bar.top = (rc.top + rc.bottom) / 2 - 9;
+                    bar.bottom = bar.top + 18;
+                    FillRoundRect(hdc, &bar, 8, RGB(44, 49, 61), TG_BORDER);
                     if (pct > 0) {
                         RECT fillr = bar;
-                        fillr.right = fillr.left + (int)((bar.right - bar.left) * pct / 100);
-                        if (fillr.right > fillr.left + 1) {
-                            fg = CreateSolidBrush(j->state == ST_ERROR ? RGB(200, 60, 60) : RGB(28, 120, 220));
-                            InflateRect(&fillr, -1, -1);
-                            FillRect(hdc, &fillr, fg);
-                            DeleteObject(fg);
+                        fillr.right = fillr.left + (int)((bar.right - bar.left - 2) * pct / 100);
+                        if (fillr.right > fillr.left + 2) {
+                            fillr.left += 1; fillr.right -= 0;
+                            fillr.top += 1; fillr.bottom -= 1;
+                            fillc = j->state == ST_ERROR ? TG_RED
+                                  : j->state == ST_PAUSED ? TG_ORANGE
+                                  : j->state == ST_DONE ? TG_GREEN : TG_ACCENT;
+                            FillSolid(hdc, &fillr, fillc);
                         }
                     }
                     if (total > 0) sprintf(txt, "%d%%", pct);
@@ -1840,15 +2467,66 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
                     } else txt[0] = 0;
                     if (txt[0]) {
                         GetTextExtentPoint32A(hdc, txt, (int)strlen(txt), &tsz);
-                        SetBkMode(hdc, TRANSPARENT);
-                        SetTextColor(hdc, RGB(40, 40, 40));
-                        of = SelectObject(hdc, GetStockObject(DEFAULT_GUI_FONT));
+                        of = SelectObject(hdc, g_hFontB);
+                        SetTextColor(hdc, TG_TXT);
                         DrawTextA(hdc, txt, -1, &bar, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
                         SelectObject(hdc, of);
                     }
                     return CDRF_SKIPDEFAULT;
                 }
-                return CDRF_DODEFAULT;
+                if (cd->iSubItem == 5) {
+                    /* status: colored dot + text */
+                    RECT rc, dot;
+                    char disp[200];
+                    COLORREF c;
+                    HGDIOBJ of, ob;
+
+                    switch (j->state) {
+                    case ST_CONNECT:
+                    case ST_DOWN:    c = TG_ACCENT;  break;
+                    case ST_QUEUED:  c = TG_ORANGE;  break;
+                    case ST_PAUSED:  c = TG_ORANGE;  break;
+                    case ST_DONE:    c = TG_GREEN;   break;
+                    case ST_ERROR:   c = TG_RED;     break;
+                    default:         c = TG_TXT_DIM; break;
+                    }
+                    ListView_GetSubItemRect(g_hList, item, 5, LVIR_BOUNDS, &rc);
+                    rc.left += 8;
+                    dot.top = (rc.top + rc.bottom) / 2 - 3;
+                    dot.bottom = dot.top + 6;
+                    dot.left = rc.left;
+                    dot.right = dot.left + 6;
+                    ob = SelectObject(hdc, CreateSolidBrush(c));
+                    SelectObject(hdc, GetStockObject(NULL_PEN));
+                    Ellipse(hdc, dot.left, dot.top, dot.right + 1, dot.bottom + 1);
+                    DeleteObject(SelectObject(hdc, ob));
+                    rc.left += 12;
+                    rc.right -= 6;
+                    lstrcpynA(disp, StateText(j), sizeof(disp));
+                    of = SelectObject(hdc, g_hFont);
+                    SetTextColor(hdc, c);
+                    DrawTextA(hdc, disp, -1, &rc,
+                        DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
+                    SelectObject(hdc, of);
+                    return CDRF_SKIPDEFAULT;
+                }
+                {
+                    /* remaining columns: dim text */
+                    RECT rc;
+                    char disp[340];
+                    if (cd->iSubItem > 6) return CDRF_DODEFAULT;
+                    ListView_GetSubItemRect(g_hList, item, cd->iSubItem, LVIR_BOUNDS, &rc);
+                    if (rc.left < 0) return CDRF_DODEFAULT;
+                    rc.left += 8;
+                    rc.right -= 6;
+                    disp[0] = 0;
+                    ListView_GetItemText(g_hList, item, cd->iSubItem, disp, sizeof(disp));
+                    SelectObject(hdc, g_hFont);
+                    SetTextColor(hdc, TG_TXT_DIM);
+                    DrawTextA(hdc, disp, -1, &rc,
+                        DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
+                    return CDRF_SKIPDEFAULT;
+                }
             }
             return CDRF_DODEFAULT;
         }
@@ -1897,6 +2575,9 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         }
         break;
     }
+    case WM_DRAWITEM:
+        SkinDrawBtn((const DRAWITEMSTRUCT *)lp);
+        return TRUE;
     case WM_COMMAND:
         switch (LOWORD(wp)) {
         case IDC_ADD:
@@ -1912,6 +2593,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         case IDC_DELETE: case IDM_DEL:    JobDelete(SelectedJob()); return 0;
         case IDC_FOLDER: case IDM_OPEN:   JobOpenFolder(SelectedJob()); return 0;
         case IDC_SET:    OpenSetPopup(); return 0;
+        case IDC_BROWSERS: OpenBrowsersPopup(); return 0;
         case IDM_COPYURL: JobCopyUrl(SelectedJob()); return 0;
         }
         break;
@@ -1966,7 +2648,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR cmdLine, int nShow)
     {
         INITCOMMONCONTROLSEX icc;
         icc.dwSize = sizeof(icc);
-        icc.dwICC = ICC_LISTVIEW_CLASSES | ICC_STANDARD_CLASSES;
+        icc.dwICC = ICC_LISTVIEW_CLASSES | ICC_STANDARD_CLASSES | ICC_TAB_CLASSES;
         InitCommonControlsEx(&icc);
     }
     CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
@@ -1976,13 +2658,16 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR cmdLine, int nShow)
     LoadJobs();
     BrowserTokenEnsure();
 
-    g_hFont = CreateFontA(16, 0, 0, 0, FW_NORMAL, 0, 0, 0, DEFAULT_CHARSET,
+    /* self-healing: every start re-registers the extension for all browsers,
+     * even when the installer's integration task was skipped */
+    if (g_browserOn) BrowsersApplyAll();
+
+    g_hFont = CreateFontA(-15, 0, 0, 0, FW_NORMAL, 0, 0, 0, DEFAULT_CHARSET,
                           OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
                           DEFAULT_PITCH | FF_DONTCARE, "Segoe UI");
-    g_hFontB = CreateFontA(16, 0, 0, 0, FW_SEMIBOLD, 0, 0, 0, DEFAULT_CHARSET,
+    g_hFontB = CreateFontA(-15, 0, 0, 0, FW_SEMIBOLD, 0, 0, 0, DEFAULT_CHARSET,
                            OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
                            DEFAULT_PITCH | FF_DONTCARE, "Segoe UI");
-    (void)g_hFontB;
 
     g_hIcon = (HICON)LoadImageA(hInst, MAKEINTRESOURCEA(1), IMAGE_ICON,
                                 32, 32, LR_DEFAULTCOLOR);
@@ -1993,7 +2678,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR cmdLine, int nShow)
     wc.hInstance = hInst;
     wc.hCursor = LoadCursor(NULL, IDC_ARROW);
     wc.hIcon = g_hIcon;
-    wc.hbrBackground = (HBRUSH)(COLOR_BTNFACE + 1);
+    wc.hbrBackground = NULL;              /* fully custom-painted background */
     wc.lpszClassName = APP_CLASS;
     RegisterClassA(&wc);
 
@@ -2002,7 +2687,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR cmdLine, int nShow)
     pc.hInstance = hInst;
     pc.hCursor = LoadCursor(NULL, IDC_ARROW);
     pc.hIcon = g_hIcon;
-    pc.hbrBackground = (HBRUSH)(COLOR_BTNFACE + 1);
+    pc.hbrBackground = NULL;
     pc.lpszClassName = ADDPOP_CLASS;
     RegisterClassA(&pc);
 
@@ -2011,13 +2696,22 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR cmdLine, int nShow)
     pc.hInstance = hInst;
     pc.hCursor = LoadCursor(NULL, IDC_ARROW);
     pc.hIcon = g_hIcon;
-    pc.hbrBackground = (HBRUSH)(COLOR_BTNFACE + 1);
+    pc.hbrBackground = NULL;
     pc.lpszClassName = SETPOP_CLASS;
+    RegisterClassA(&pc);
+
+    ZeroMemory(&pc, sizeof(pc));
+    pc.lpfnWndProc = BrowsWndProc;
+    pc.hInstance = hInst;
+    pc.hCursor = LoadCursor(NULL, IDC_ARROW);
+    pc.hIcon = g_hIcon;
+    pc.hbrBackground = NULL;
+    pc.lpszClassName = BRW_CLASS;
     RegisterClassA(&pc);
 
     g_hMain = CreateWindowA(APP_CLASS, APP_TITLE,
         WS_OVERLAPPEDWINDOW,
-        CW_USEDEFAULT, CW_USEDEFAULT, 1040, 580, NULL, NULL, hInst, NULL);
+        CW_USEDEFAULT, CW_USEDEFAULT, 1080, 660, NULL, NULL, hInst, NULL);
     if (!g_hMain) return 1;
 
     KickQueue();
