@@ -138,6 +138,8 @@ jobs:
           git config user.email "abaduchanna@gmail.com"
           rm -rf pages && mkdir pages && cd pages
           git init -q -b gh-pages
+          git config user.name "3SVerse CI"
+          git config user.email "abaduchanna@gmail.com"
           cp ../hosted/* .
           git add -A
           git commit -q -m "hosted update files ${GITHUB_REF_NAME}"
