@@ -108,7 +108,6 @@ static void SendResponse(SOCKET s, int code, const char *ctype,
                "Access-Control-Allow-Methods: GET, POST, OPTIONS\r\n"
                "Access-Control-Allow-Headers: Content-Type, X-GrabStorm-Token\r\n"
              : "");
-    (void)reason;
     if (n < 0 || n >= (int)sizeof(hdr)) return;
     SendAll(s, hdr, n);
     if (body && blen > 0) SendAll(s, body, blen);
