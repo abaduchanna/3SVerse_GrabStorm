@@ -59,23 +59,37 @@ const
   FfXpiUrlV = '{#FfXpiUrl}';
   WM_QUIT_V = $0012;
 
-  // Chromium policy roots + their executable names
-  ChromiumRoots: array[0..5] of String = (
-    'Google\Chrome',
-    'Microsoft\Edge',
-    'BraveSoftware\Brave',
-    'Vivaldi',
-    'Opera Software\Opera',
-    'Yandex\YandexBrowser');
-  BrowserNames: array[0..5] of String = (
-    'Google Chrome', 'Microsoft Edge', 'Brave', 'Vivaldi', 'Opera', 'Yandex');
-  BrowserExes: array[0..5] of String = (
-    'chrome.exe', 'msedge.exe', 'brave.exe', 'vivaldi.exe', 'opera.exe', 'yandex.exe');
-
 var
   LogFile: String;
+  // Chromium policy roots + their executable names (filled by InitBrowserArrays;
+  // Inno Pascal Script does not support Delphi-style array constants)
+  ChromiumRoots: array[0..5] of String;
+  BrowserNames: array[0..5] of String;
+  BrowserExes: array[0..5] of String;
 
 procedure Sleep(ms: LongInt); external 'Sleep@kernel32.dll stdcall';
+
+procedure InitBrowserArrays;
+begin
+  ChromiumRoots[0] := 'Google\Chrome';
+  ChromiumRoots[1] := 'Microsoft\Edge';
+  ChromiumRoots[2] := 'BraveSoftware\Brave';
+  ChromiumRoots[3] := 'Vivaldi';
+  ChromiumRoots[4] := 'Opera Software\Opera';
+  ChromiumRoots[5] := 'Yandex\YandexBrowser';
+  BrowserNames[0] := 'Google Chrome';
+  BrowserNames[1] := 'Microsoft Edge';
+  BrowserNames[2] := 'Brave';
+  BrowserNames[3] := 'Vivaldi';
+  BrowserNames[4] := 'Opera';
+  BrowserNames[5] := 'Yandex';
+  BrowserExes[0] := 'chrome.exe';
+  BrowserExes[1] := 'msedge.exe';
+  BrowserExes[2] := 'brave.exe';
+  BrowserExes[3] := 'vivaldi.exe';
+  BrowserExes[4] := 'opera.exe';
+  BrowserExes[5] := 'yandex.exe';
+end;
 
 procedure LogLine(const S: String);
 var
@@ -139,6 +153,7 @@ var
   chk: String;
 begin
   if CurStep <> ssPostInstall then Exit;
+  InitBrowserArrays;
   LogFile := ExpandConstant('{localappdata}') + '\3SVerse\GrabStorm\install.log';
   ForceDirectories(ExtractFilePath(LogFile));
   LogLine('=== GrabStorm install ' + GetDateTimeString('yyyy/mm/dd hh:nn:ss', '-', ':') + ' ===');
@@ -203,6 +218,7 @@ var
   v: String;
 begin
   if CurUninstallStep <> usPostUninstall then Exit;
+  InitBrowserArrays;
   LogFile := ExpandConstant('{localappdata}') + '\3SVerse\GrabStorm\install.log';
   ForceDirectories(ExtractFilePath(LogFile));
   LogLine('=== GrabStorm uninstall ' + GetDateTimeString('yyyy/mm/dd hh:nn:ss', '-', ':') + ' ===');
