@@ -44,7 +44,7 @@ which are shown in bytes (`KB`, `MB`, `GB`) — 8 bits = 1 byte.
 ## Install
 
 ### Setup (recommended)
-1. Download `GrabStorm_v1.1.0_Setup.exe` from the [releases page](https://github.com/abaduchanna/3SVerse_TurboGrab/releases).
+1. Download `GrabStorm_v1.2.0_Setup.exe` from the [releases page](https://github.com/abaduchanna/3SVerse_GrabStorm/releases).
 2. Run it — no admin rights needed (installs per-user).
 3. Keep **Auto-install the GrabStorm browser extension** checked; the installer
    writes per-user policies for every Chromium browser it finds
@@ -60,7 +60,7 @@ and the `grabstorm://` protocol are not registered by the portable build.
 
 - Chromium browsers load the extension through `ExtensionInstallForcelist` +
   `ExtensionInstallSources` user policies pointing at the self-hosted CRX3 on
-  GitHub Pages (`update.xml` at `https://abaduchanna.github.io/3SVerse_TurboGrab/update.xml`).
+  GitHub Pages (`update.xml` at `https://abaduchanna.github.io/3SVerse_GrabStorm/update.xml`).
 - Firefox: the XPI is registered via the Firefox `Extensions\Install` policy — this
   works on **Firefox ESR / Dev / Nightly**; release-channel Firefox only accepts
   *signed* add-ons, so there it can be loaded temporarily via `about:debugging`.

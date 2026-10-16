@@ -83,7 +83,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       EXT_ID: ooclbgcgolihefahehfjjcmlfdlhncno
-      PAGES_BASE: https://abaduchanna.github.io/3SVerse_TurboGrab
+      PAGES_BASE: https://abaduchanna.github.io/3SVerse_GrabStorm
     steps:
       - name: Checkout (signing key + CRX3 packer)
         uses: actions/checkout@v4

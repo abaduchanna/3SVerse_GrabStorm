@@ -1,15 +1,15 @@
-; GrabStorm v1.1.0 — 3SVerse multi-segment download accelerator for Windows
+; GrabStorm v1.2.0 — 3SVerse multi-segment download accelerator for Windows
 ; Per-user installer (no admin). Auto-installs the GrabStorm Integration
 ; browser extension into every installed Chromium browser + Firefox via
 ; per-user policies, registers the grabstorm:// protocol, and writes a
 ; diagnostic log to %LOCALAPPDATA%\3SVerse\GrabStorm\install.log
 
 #define AppName "GrabStorm"
-#define AppVer "1.1.0"
+#define AppVer "1.2.0"
 #define ExtId "ooclbgcgolihefahehfjjcmlfdlhncno"
-#define ExtUpdateUrl "https://abaduchanna.github.io/3SVerse_TurboGrab/update.xml"
+#define ExtUpdateUrl "https://abaduchanna.github.io/3SVerse_GrabStorm/update.xml"
 #define ExtSources "https://abaduchanna.github.io/*"
-#define FfXpiUrl "https://abaduchanna.github.io/3SVerse_TurboGrab/GrabStorm.xpi"
+#define FfXpiUrl "https://abaduchanna.github.io/3SVerse_GrabStorm/GrabStorm.xpi"
 
 [Setup]
 AppId={{6E2F1C44-9A83-4D17-B55B-9C1E2F3A4B5C}}
@@ -159,10 +159,6 @@ begin
   LogLine('=== GrabStorm install ' + GetDateTimeString('yyyy/mm/dd hh:nn:ss', '-', ':') + ' ===');
 
   KillRunningApp;
-
-  // retire the previous TurboGrab integration completely
-  if RegDeleteKeyIncludingSubkeys(HKEY_CURRENT_USER, 'Software\3SVerse\TurboGrab') then
-    LogLine('Old TurboGrab marker keys removed.');
 
   if not IsTaskSelected('browserinteg') then
   begin

@@ -1,4 +1,4 @@
-/* 3SVerse GrabStorm v1.1.0 — multi-segment download accelerator for Windows
+/* 3SVerse GrabStorm v1.2.0 — multi-segment download accelerator for Windows
  * MIT License — Copyright (c) 2026 Abad Umair Channa / 3S Verse
  *
  * Clean-room statement: GrabStorm is an independent, original implementation
@@ -33,12 +33,12 @@ typedef struct GpGraphics GpGraphics;
 typedef struct GpImage GpImage;
 typedef struct GpImageAttributes GpImageAttributes;
 
-#define APP_TITLEW  L"3SVerse GrabStorm v1.1.0"
+#define APP_TITLEW  L"3SVerse GrabStorm v1.2.0"
 #define APP_CLASSW  L"3SVerseGrabStorm"
 #define BTN_CLASSW  L"3SVBtn"
 #define ADD_CLASSW  L"GSAddDlg"
 #define OPT_CLASSW  L"GSOptDlg"
-#define APP_VER_A   L"v1.1.0"
+#define APP_VER_A   L"v1.2.0"
 
 /* embedded brand art (RCDATA in src/res.rc) */
 #define RES_LOGO    101
