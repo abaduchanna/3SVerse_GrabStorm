@@ -1,0 +1,90 @@
+name: Build TurboGrab
+
+on:
+  push:
+    branches: [ main ]
+    tags: [ 'v*' ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Inno Setup
+        run: choco install innosetup -y --no-progress
+
+      - name: Collect docs into dist
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Copy-Item LICENSE dist\LICENSE.txt
+          Copy-Item README.md dist\README.md
+
+      - name: Compile resources
+        shell: pwsh
+        run: |
+          windres src\icon.rc -O coff -o src\icon_res.o
+          if ($LASTEXITCODE -ne 0) { throw "windres failed" }
+
+      - name: Compile TurboGrab.exe
+        shell: pwsh
+        run: |
+          gcc src\main.c src\icon_res.o -o dist\TurboGrab.exe `
+            -mwindows `
+            -lwinhttp -lcomctl32 -lshell32 -lole32 -lgdi32 -luser32 -lkernel32 -s
+          if ($LASTEXITCODE -ne 0) { throw "gcc failed" }
+          Get-Item dist\TurboGrab.exe | Select-Object Name,Length
+
+      - name: Build installer
+        shell: pwsh
+        run: |
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          & $iscc installer.iss
+          if ($LASTEXITCODE -ne 0) { throw "ISCC failed" }
+
+      - name: Build portable zip
+        shell: pwsh
+        run: |
+          Compress-Archive -Path dist\* -DestinationPath Output\TurboGrab_Portable.zip -Force
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: turbograb-build
+          path: |
+            dist/TurboGrab.exe
+            dist/LICENSE.txt
+            dist/README.md
+            Output/*.exe
+            Output/*.zip
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: turbograb-build
+          path: artifact
+
+      - name: Flatten artifact tree (upload-artifact@v4 preserves structure)
+        run: |
+          mkdir -p rel
+          find artifact -type f \( -name "*_Setup.exe" -o -name "*Portable.zip" \) -exec mv {} rel/ \;
+          ls -la rel/
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          gh release create "$TAG" rel/* --title "TurboGrab ${TAG}" --notes "Free & open download accelerator for Windows — multi-segment HTTP(S) downloads with pause/resume, queue, clipboard monitoring and category folders. MIT licensed. Install the Setup exe, or unzip the Portable package and run TurboGrab.exe."

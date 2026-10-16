@@ -1,0 +1,4 @@
+dist/
+Output/
+*.o
+src/*.o
