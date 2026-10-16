@@ -1,27 +1,39 @@
 {
   "manifest_version": 3,
-  "name": "TurboGrab Integration",
-  "version": "1.3.0",
+  "name": "GrabStorm Integration",
+  "version": "1.0.0",
+  "description": "Send downloads to GrabStorm \u2014 multi-segment acceleration, resume and queue.",
+  "minimum_chrome_version": "111",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAoQ440QHOdoGRF8FfvGDB4oGLMVI2qBequi34Q3iXvdCdueAbljr+nVBt4XaZK3vWjAdZNvBGB20PwlrciPHs/72m/4cIM6IVY9sTGgwk2SimDIlZT37bsbS/kh9p8JzzNFq7CysXRdcQdHkYhjqUX8YzuepG0rrxMxytS6gyY1giNMHWGavmOWQofbNX/38LzqpuRYs4tzetxirWoSlR37z7+BQ8RKV8Co2/9YlEUbxtfs4INWCkCZf43UwzVQc3BxB3Lr+uL5C3lyqNMgrhYulFW8lkhCWfLQcyjyOIm793PZf7/0rRufE9/fDH++NYPuCrINl+2/S5dSABYsIjxwIDAQAB",
-  "description": "Send download links to TurboGrab — the free & open download accelerator for Windows. Context-menu capture, automatic takeover of browser downloads.",
-  "permissions": ["contextMenus", "downloads", "storage", "notifications"],
-  "host_permissions": ["http://127.0.0.1/*", "http://localhost/*"],
-  "background": { "service_worker": "background.js" },
+  "permissions": [
+    "contextMenus",
+    "storage"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "<all_urls>"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "run_at": "document_idle",
+      "all_frames": true
+    }
+  ],
+  "options_ui": {
+    "page": "options.html"
+  },
   "icons": {
     "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
     "48": "icons/icon48.png",
     "128": "icons/icon128.png"
-  },
-  "action": {
-    "default_popup": "popup.html",
-    "default_title": "TurboGrab",
-    "default_icon": {
-      "16": "icons/icon16.png",
-      "48": "icons/icon48.png"
-    }
-  },
-  "options_ui": {
-    "page": "options.html",
-    "open_in_tab": true
   }
 }

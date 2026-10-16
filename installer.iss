@@ -1,238 +1,238 @@
-; TurboGrab setup — Inno Setup 6
-; PrivilegesRequired=lowest -> per-user install into %LOCALAPPDATA%, no UAC
-; v1.2.0: browser extension auto-install — after install, the TurboGrab
-; Integration extension is force-installed into every Chromium browser and
-; Firefox found on the machine (HKCU policies, per-user, no admin needed).
-; Self-hosted update source: https://abaduchanna.github.io/3SVerse_TurboGrab/
-#define MyAppName "TurboGrab"
-#define MyAppVersion "1.3.0"
-#define MyAppPublisher "3S Verse"
-#define MyAppExeName "TurboGrab.exe"
+; GrabStorm v1.0.0 — 3SVerse multi-segment download accelerator for Windows
+; Per-user installer (no admin). Auto-installs the GrabStorm Integration
+; browser extension into every installed Chromium browser + Firefox via
+; per-user policies, registers the grabstorm:// protocol, and writes a
+; diagnostic log to %LOCALAPPDATA%\3SVerse\GrabStorm\install.log
 
-; --- extension auto-install constants --------------------------------------
+#define AppName "GrabStorm"
+#define AppVer "1.0.0"
 #define ExtId "ooclbgcgolihefahehfjjcmlfdlhncno"
 #define ExtUpdateUrl "https://abaduchanna.github.io/3SVerse_TurboGrab/update.xml"
 #define ExtSources "https://abaduchanna.github.io/*"
-#define ExtXpiUrl "https://abaduchanna.github.io/3SVerse_TurboGrab/TurboGrab.xpi"
+#define FfXpiUrl "https://abaduchanna.github.io/3SVerse_TurboGrab/GrabStorm.xpi"
 
 [Setup]
-AppId={{4B8D2F6A-9C31-4E57-A8D2-6F1B3C9E5A70}
-AppName={#MyAppName}
-AppVersion={#MyAppVersion}
-AppVerName={#MyAppName} v{#MyAppVersion}
-AppPublisher={#MyAppPublisher}
-AppPublisherURL=https://3sverse.com
-AppSupportURL=https://github.com/abaduchanna/3SVerse_TurboGrab
-DefaultDirName={localappdata}\3SVerse\TurboGrab
-DefaultGroupName={#MyAppName}
-DisableProgramGroupPage=yes
-LicenseFile=LICENSE
+AppId={{6E2F1C44-9A83-4D17-B55B-9C1E2F3A4B5C}}
+AppName={#AppName}
+AppVersion={#AppVer}
+AppPublisher=3SVerse
+AppPublisherURL=https://www.3sverse.com
+DefaultDirName={localappdata}\Programs\GrabStorm
+DefaultGroupName=GrabStorm
+UninstallDisplayIcon={app}\GrabStorm.exe
 OutputDir=Output
-OutputBaseFilename=TurboGrab_v{#MyAppVersion}_Setup
-SetupIconFile=src\icon.ico
-Compression=lzma2/max
+OutputBaseFilename=GrabStorm_v{#AppVer}_Setup
+Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
 PrivilegesRequired=lowest
-UninstallDisplayIcon={app}\{#MyAppExeName}
-CloseApplications=yes
-
-[Tasks]
-Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
-Name: "browserinteg"; Description: "Auto-install the TurboGrab extension into all installed browsers (Chrome, Edge, Brave, Opera, Vivaldi, Yandex, Firefox)"; GroupDescription: "Browser integration:"; Flags: checkedonce
+CloseApplications=no
 
 [Files]
-Source: "dist\TurboGrab.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "dist\GrabStorm.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "dist\LICENSE.txt"; DestDir: "{app}"; Flags: ignoreversion
 Source: "dist\README.md"; DestDir: "{app}"; Flags: ignoreversion
-Source: "Output\TurboGrab_Extension_Chrome.zip"; DestDir: "{app}\extensions"; Flags: ignoreversion
-Source: "Output\TurboGrab_Extension_Firefox.zip"; DestDir: "{app}\extensions"; Flags: ignoreversion
 
 [Icons]
-Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
-Name: "{group}\{cm:UninstallProgram,{#MyAppName}}"; Filename: "{uninstallexe}"
-Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
+Name: "{group}\GrabStorm"; Filename: "{app}\GrabStorm.exe"
+Name: "{userdesktop}\GrabStorm"; Filename: "{app}\GrabStorm.exe"; Tasks: desktopicon
+
+[Tasks]
+Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription: "Additional icons:"
+Name: "browserinteg"; Description: "Auto-install the GrabStorm browser extension (Chrome, Edge, Brave, Opera, Vivaldi, Yandex, Firefox)"; GroupDescription: "Browser integration:"; Flags: checkedonce
+
+[Registry]
+Root: HKCU; Subkey: "Software\Classes\grabstorm"; ValueType: string; ValueData: "URL:GrabStorm Protocol"; Flags: uninsdeletekey
+Root: HKCU; Subkey: "Software\Classes\grabstorm"; ValueType: string; ValueName: "URL Protocol"; ValueData: ""; Flags: uninsdeletekey
+Root: HKCU; Subkey: "Software\Classes\grabstorm\DefaultIcon"; ValueType: string; ValueData: "{app}\GrabStorm.exe,0"; Flags: uninsdeletekey
+Root: HKCU; Subkey: "Software\Classes\grabstorm\shell\open\command"; ValueType: string; ValueData: """{app}\GrabStorm.exe"" ""%1"""; Flags: uninsdeletekey
+Root: HKCU; Subkey: "Software\3SVerse\GrabStorm"; ValueType: string; ValueName: "AppPath"; ValueData: "{app}\GrabStorm.exe"; Flags: uninsdeletekey
 
 [Run]
-Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#MyAppName}}"; Flags: nowait postinstall skipifsilent
-
-[UninstallDelete]
-; partial .part files in the user's save-to folders are kept on purpose
-Type: files; Name: "{app}\*.part"
+Filename: "{app}\GrabStorm.exe"; Description: "Launch GrabStorm"; Flags: nowait postinstall skipifsilent
 
 [Code]
 const
-  ExtId       = '{#ExtId}';
-  ExtUpdUrl   = '{#ExtUpdateUrl}';
-  ExtSrcUrl   = '{#ExtSources}';
-  ExtXpiUrl   = '{#ExtXpiUrl}';
+  ExtIdV = '{#ExtId}';
+  ExtUpdateUrlV = '{#ExtUpdateUrl}';
+  ExtSourcesV = '{#ExtSources}';
+  FfXpiUrlV = '{#FfXpiUrl}';
+  WM_QUIT_V = $0012;
 
-// ---------------------------------------------------------------- detection
-// 32-bit setup process: HKCU is NOT subject to WOW64 redirection, but
-// HKLM\Software is (we read Wow6432Node transparently). So for system-wide
-// browsers we additionally probe the well-known exe paths directly.
+  // Chromium policy roots + their executable names
+  ChromiumRoots: array[0..5] of String = (
+    'Google\Chrome',
+    'Microsoft\Edge',
+    'BraveSoftware\Brave',
+    'Vivaldi',
+    'Opera Software\Opera',
+    'Yandex\YandexBrowser');
+  BrowserNames: array[0..5] of String = (
+    'Google Chrome', 'Microsoft Edge', 'Brave', 'Vivaldi', 'Opera', 'Yandex');
+  BrowserExes: array[0..5] of String = (
+    'chrome.exe', 'msedge.exe', 'brave.exe', 'vivaldi.exe', 'opera.exe', 'yandex.exe');
 
-function ChromePresent(): Boolean;
+var
+  LogFile: String;
+
+procedure Sleep(ms: LongInt); external 'Sleep@kernel32.dll stdcall';
+
+procedure LogLine(const S: String);
+var
+  A: AnsiString;
 begin
-  Result :=
-    RegKeyExists(HKEY_CURRENT_USER, 'Software\Google\Chrome') or
-    RegKeyExists(HKEY_LOCAL_MACHINE, 'Software\Google\Chrome') or
-    RegKeyExists(HKEY_LOCAL_MACHINE, 'Software\Wow6432Node\Google\Chrome') or
-    FileExists('C:\Program Files\Google\Chrome\Application\chrome.exe') or
-    FileExists('C:\Program Files (x86)\Google\Chrome\Application\chrome.exe') or
-    FileExists(ExpandConstant('{localappdata}\Google\Chrome\Application\chrome.exe'));
+  A := S + #13#10;
+  SaveStringToFile(LogFile, A, True);
 end;
 
-function EdgePresent(): Boolean;
+function DirHas(const dir, exe: String): Boolean;
 begin
-  Result :=
-    RegKeyExists(HKEY_CURRENT_USER, 'Software\Microsoft\Edge') or
-    FileExists('C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe') or
-    FileExists('C:\Program Files\Microsoft\Edge\Application\msedge.exe');
+  Result := FileExists(AddBackslash(dir) + exe);
 end;
 
-function BravePresent(): Boolean;
+// search the standard install roots of one browser; returns its Application dir
+function DetectBrowser(idx: Integer): String;
+var
+  pf, pf32, lad, lap: String;
+  rel: String;
 begin
-  Result :=
-    RegKeyExists(HKEY_CURRENT_USER, 'Software\BraveSoftware\Brave') or
-    FileExists('C:\Program Files\BraveSoftware\Brave-Browser\Application\brave.exe') or
-    FileExists('C:\Program Files (x86)\BraveSoftware\Brave-Browser\Application\brave.exe') or
-    FileExists(ExpandConstant('{localappdata}\BraveSoftware\Brave-Browser\Application\brave.exe'));
+  Result := '';
+  pf  := ExpandConstant('{pf}');
+  pf32 := ExpandConstant('{pf32}');
+  lad := ExpandConstant('{localappdata}');
+  lap := lad + '\Programs';
+  rel := '\' + ChromiumRoots[idx] + '\Application';
+
+  if DirHas(pf  + rel, BrowserExes[idx]) then Result := pf  + rel
+  else if DirHas(pf32 + rel, BrowserExes[idx]) then Result := pf32 + rel
+  else if DirHas(lap + rel,  BrowserExes[idx]) then Result := lap + rel
+  else if DirHas(lad + rel,  BrowserExes[idx]) then Result := lad + rel;
 end;
 
-function VivaldiPresent(): Boolean;
-begin
-  Result :=
-    RegKeyExists(HKEY_CURRENT_USER, 'Software\Vivaldi') or
-    FileExists('C:\Program Files\Vivaldi\Application\vivaldi.exe') or
-    FileExists('C:\Program Files (x86)\Vivaldi\Application\vivaldi.exe') or
-    FileExists(ExpandConstant('{localappdata}\Vivaldi\Application\vivaldi.exe'));
-end;
-
-function OperaPresent(): Boolean;
-begin
-  Result :=
-    RegKeyExists(HKEY_CURRENT_USER, 'Software\Opera Software') or
-    FileExists('C:\Program Files\Opera\opera.exe') or
-    FileExists('C:\Program Files (x86)\Opera\opera.exe') or
-    FileExists(ExpandConstant('{localappdata}\Programs\Opera\opera.exe'));
-end;
-
-function YandexPresent(): Boolean;
-begin
-  Result :=
-    RegKeyExists(HKEY_CURRENT_USER, 'Software\Yandex\YandexBrowser') or
-    FileExists(ExpandConstant('{localappdata}\Yandex\YandexBrowser\Application\browser.exe'));
-end;
-
-function FirefoxPresent(): Boolean;
-begin
-  Result :=
-    RegKeyExists(HKEY_CURRENT_USER, 'Software\Mozilla\Mozilla Firefox') or
-    RegKeyExists(HKEY_LOCAL_MACHINE, 'Software\Mozilla\Mozilla Firefox') or
-    FileExists('C:\Program Files\Mozilla Firefox\firefox.exe') or
-    FileExists('C:\Program Files (x86)\Mozilla Firefox\firefox.exe');
-end;
-
-// ------------------------------------------------------------ policy writes
-
-procedure WriteChromiumPolicy(const PolicyRoot: String);
+procedure WriteChromiumPolicy(const Root: String);
 begin
   RegWriteStringValue(HKEY_CURRENT_USER,
-    'Software\Policies\' + PolicyRoot + '\ExtensionInstallForcelist',
-    '1', ExtId + ';' + ExtUpdUrl);
+    'Software\Policies\' + Root + '\ExtensionInstallForcelist', '1',
+    ExtIdV + ';' + ExtUpdateUrlV);
   RegWriteStringValue(HKEY_CURRENT_USER,
-    'Software\Policies\' + PolicyRoot + '\ExtensionInstallSources',
-    '1', ExtSrcUrl);
+    'Software\Policies\' + Root + '\ExtensionInstallSources', '1',
+    ExtSourcesV);
 end;
 
-procedure RemoveChromiumPolicy(const PolicyRoot: String);
+procedure KillRunningApp;
 var
-  FL, FS, V: String;
+  wnd: HWND;
 begin
-  FL := 'Software\Policies\' + PolicyRoot + '\ExtensionInstallForcelist';
-  FS := 'Software\Policies\' + PolicyRoot + '\ExtensionInstallSources';
-  // only delete values we own ("1"); foreign enterprise entries (2,3,...) stay
-  if RegQueryStringValue(HKEY_CURRENT_USER, FL, '1', V) and (V = ExtId + ';' + ExtUpdUrl) then
+  wnd := FindWindowByClassName('3SVerseGrabStorm');
+  if wnd <> 0 then
   begin
-    RegDeleteValue(HKEY_CURRENT_USER, FL, '1');
-    RegDeleteKeyIfEmpty(HKEY_CURRENT_USER, FL);
-    RegDeleteKeyIfEmpty(HKEY_CURRENT_USER, 'Software\Policies\' + PolicyRoot);
-  end;
-  if RegQueryStringValue(HKEY_CURRENT_USER, FS, '1', V) and (V = ExtSrcUrl) then
-  begin
-    RegDeleteValue(HKEY_CURRENT_USER, FS, '1');
-    RegDeleteKeyIfEmpty(HKEY_CURRENT_USER, FS);
+    LogLine('GrabStorm was running - asked it to close.');
+    PostMessage(wnd, WM_QUIT_V, 0, 0);
+    Sleep(900);
   end;
 end;
-
-procedure InstallBrowserIntegration();
-var
-  N: Integer;
-begin
-  N := 0;
-  if ChromePresent() then begin WriteChromiumPolicy('Google\Chrome'); N := N + 1; end;
-  if EdgePresent() then begin WriteChromiumPolicy('Microsoft\Edge'); N := N + 1; end;
-  if BravePresent() then begin WriteChromiumPolicy('BraveSoftware\Brave'); N := N + 1; end;
-  if VivaldiPresent() then begin WriteChromiumPolicy('Vivaldi'); N := N + 1; end;
-  if OperaPresent() then begin WriteChromiumPolicy('Opera Software\Opera'); N := N + 1; end;
-  if YandexPresent() then begin WriteChromiumPolicy('Yandex\YandexBrowser'); N := N + 1; end;
-  if FirefoxPresent() then
-  begin
-    // Firefox reads the same Chromium-style policy tree from HKCU.
-    // NOTE: release-channel Firefox still enforces add-on signing for remote
-    // XPIs; ESR/Dev/Nightly honor this. Harmless no-op otherwise.
-    RegWriteStringValue(HKEY_CURRENT_USER,
-      'Software\Policies\Mozilla\Firefox\Extensions\Install',
-      '1', ExtXpiUrl);
-    N := N + 1;
-  end;
-  RegWriteStringValue(HKEY_CURRENT_USER, 'Software\3SVerse\TurboGrab',
-    'ExtensionIntegration', IntToStr(N) + ' browsers configured');
-  RegWriteStringValue(HKEY_CURRENT_USER, 'Software\3SVerse\TurboGrab',
-    'ExtensionId', ExtId);
-end;
-
-procedure RemoveBrowserIntegration();
-var
-  V: String;
-begin
-  RemoveChromiumPolicy('Google\Chrome');
-  RemoveChromiumPolicy('Microsoft\Edge');
-  RemoveChromiumPolicy('BraveSoftware\Brave');
-  RemoveChromiumPolicy('Vivaldi');
-  RemoveChromiumPolicy('Opera Software\Opera');
-  RemoveChromiumPolicy('Yandex\YandexBrowser');
-  begin
-    if RegQueryStringValue(HKEY_CURRENT_USER,
-         'Software\Policies\Mozilla\Firefox\Extensions\Install', '1', V) and
-       (V = ExtXpiUrl) then
-    begin
-      RegDeleteValue(HKEY_CURRENT_USER,
-        'Software\Policies\Mozilla\Firefox\Extensions\Install', '1');
-      RegDeleteKeyIfEmpty(HKEY_CURRENT_USER,
-        'Software\Policies\Mozilla\Firefox\Extensions\Install');
-      RegDeleteKeyIfEmpty(HKEY_CURRENT_USER,
-        'Software\Policies\Mozilla\Firefox\Extensions');
-      RegDeleteKeyIfEmpty(HKEY_CURRENT_USER,
-        'Software\Policies\Mozilla\Firefox');
-    end;
-  end;
-  RegDeleteValue(HKEY_CURRENT_USER, 'Software\3SVerse\TurboGrab', 'ExtensionIntegration');
-  RegDeleteValue(HKEY_CURRENT_USER, 'Software\3SVerse\TurboGrab', 'ExtensionId');
-end;
-
-// -------------------------------------------------------------------- hooks
 
 procedure CurStepChanged(CurStep: TSetupStep);
+var
+  i, n, ff: Integer;
+  b: String;
+  chk: String;
 begin
-  if CurStep = ssPostInstall then
-    if IsTaskSelected('browserinteg') then
-      InstallBrowserIntegration();
+  if CurStep <> ssPostInstall then Exit;
+  LogFile := ExpandConstant('{localappdata}') + '\3SVerse\GrabStorm\install.log';
+  ForceDirectories(ExtractFilePath(LogFile));
+  LogLine('=== GrabStorm install ' + GetDateTimeString('yyyy/mm/dd hh:nn:ss', '-', ':') + ' ===');
+
+  KillRunningApp;
+
+  // retire the previous TurboGrab integration completely
+  if RegDeleteKeyIncludingSubkeys(HKEY_CURRENT_USER, 'Software\3SVerse\TurboGrab') then
+    LogLine('Old TurboGrab marker keys removed.');
+
+  if not IsTaskSelected('browserinteg') then
+  begin
+    LogLine('Browser integration task not selected - skipping extension policy install.');
+    LogLine('=== done ===');
+    Exit;
+  end;
+
+  n := 0;
+  for i := 0 to 5 do
+  begin
+    b := DetectBrowser(i);
+    if b <> '' then
+    begin
+      WriteChromiumPolicy(ChromiumRoots[i]);
+      LogLine('Detected ' + BrowserNames[i] + ' at ' + b);
+      LogLine('  wrote HKCU\Software\Policies\' + ChromiumRoots[i] + '\ExtensionInstallForcelist');
+      n := n + 1;
+    end
+    else
+      LogLine('Not found: ' + BrowserNames[i]);
+  end;
+
+  ff := 0;
+  if DirHas(ExpandConstant('{pf}') + '\Mozilla Firefox', 'firefox.exe') or
+     DirHas(ExpandConstant('{pf32}') + '\Mozilla Firefox', 'firefox.exe') or
+     DirHas(ExpandConstant('{localappdata}') + '\Mozilla Firefox', 'firefox.exe') then
+  begin
+    RegWriteStringValue(HKEY_CURRENT_USER,
+      'Software\Policies\Mozilla\Firefox\Extensions\Install', '1', FfXpiUrlV);
+    LogLine('Detected Firefox - wrote Extensions\Install policy (ESR/Dev/Nightly only; release Firefox requires a signed add-on).');
+    ff := 1;
+  end;
+
+  LogLine('--- verification readback ---');
+  for i := 0 to 5 do
+  begin
+    if RegQueryStringValue(HKEY_CURRENT_USER,
+        'Software\Policies\' + ChromiumRoots[i] + '\ExtensionInstallForcelist', '1', chk) then
+      LogLine('VERIFY ' + ChromiumRoots[i] + ': ' + chk)
+    else
+      LogLine('VERIFY ' + ChromiumRoots[i] + ': MISSING');
+  end;
+
+  LogLine(IntToStr(n) + ' Chromium browser(s) integrated, Firefox=' + IntToStr(ff) + '.');
+  LogLine('IMPORTANT: restart every browser once so the policy-installed extension loads.');
+  LogLine('=== done ===');
 end;
 
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+var
+  i: Integer;
+  v: String;
 begin
-  if CurUninstallStep = usPostUninstall then
-    RemoveBrowserIntegration();
+  if CurUninstallStep <> usPostUninstall then Exit;
+  LogFile := ExpandConstant('{localappdata}') + '\3SVerse\GrabStorm\install.log';
+  ForceDirectories(ExtractFilePath(LogFile));
+  LogLine('=== GrabStorm uninstall ' + GetDateTimeString('yyyy/mm/dd hh:nn:ss', '-', ':') + ' ===');
+  for i := 0 to 5 do
+  begin
+    if RegQueryStringValue(HKEY_CURRENT_USER,
+        'Software\Policies\' + ChromiumRoots[i] + '\ExtensionInstallForcelist', '1', v) and
+       (Pos(ExtIdV, v) > 0) then
+    begin
+      RegDeleteValue(HKEY_CURRENT_USER,
+        'Software\Policies\' + ChromiumRoots[i] + '\ExtensionInstallForcelist', '1');
+      RegDeleteValue(HKEY_CURRENT_USER,
+        'Software\Policies\' + ChromiumRoots[i] + '\ExtensionInstallSources', '1');
+      RegDeleteKeyIfEmpty(HKEY_CURRENT_USER,
+        'Software\Policies\' + ChromiumRoots[i] + '\ExtensionInstallForcelist');
+      RegDeleteKeyIfEmpty(HKEY_CURRENT_USER,
+        'Software\Policies\' + ChromiumRoots[i] + '\ExtensionInstallSources');
+      LogLine('Removed integration policy for ' + ChromiumRoots[i]);
+    end;
+  end;
+  if RegQueryStringValue(HKEY_CURRENT_USER,
+      'Software\Policies\Mozilla\Firefox\Extensions\Install', '1', v) and
+     (Pos('GrabStorm.xpi', v) > 0) then
+  begin
+    RegDeleteValue(HKEY_CURRENT_USER, 'Software\Policies\Mozilla\Firefox\Extensions\Install', '1');
+    RegDeleteKeyIfEmpty(HKEY_CURRENT_USER, 'Software\Policies\Mozilla\Firefox\Extensions\Install');
+    RegDeleteKeyIfEmpty(HKEY_CURRENT_USER, 'Software\Policies\Mozilla\Firefox\Extensions');
+    RegDeleteKeyIfEmpty(HKEY_CURRENT_USER, 'Software\Policies\Mozilla\Firefox');
+    RegDeleteKeyIfEmpty(HKEY_CURRENT_USER, 'Software\Policies\Mozilla');
+    LogLine('Removed Firefox integration policy.');
+  end;
+  LogLine('=== done ===');
 end;

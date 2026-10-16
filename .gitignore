@@ -1,4 +1,5 @@
 dist/
 Output/
 *.o
-src/*.o
+extchrome/
+extfirefox/

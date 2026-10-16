@@ -1,9 +1,9 @@
-name: Build TurboGrab
+name: Build GrabStorm
 
 on:
   push:
     branches: [ main ]
-    tags: [ 'v*' ]
+    tags: [ 'v*', 'grabstorm-v*' ]
   workflow_dispatch:
 
 permissions:
@@ -29,19 +29,20 @@ jobs:
       - name: Compile resources
         shell: pwsh
         run: |
-          windres src\icon.rc -O coff -o src\icon_res.o
+          windres src\res.rc -O coff -o src\res_res.o
           if ($LASTEXITCODE -ne 0) { throw "windres failed" }
 
-      - name: Compile TurboGrab.exe
+      - name: Compile GrabStorm.exe
         shell: pwsh
         run: |
-          gcc src\main.c src\localsrv.c src\browext.c src\icon_res.o -o dist\TurboGrab.exe `
-            -mwindows `
-            -lwinhttp -lws2_32 -ladvapi32 -lcomctl32 -lshell32 -lole32 -lgdi32 -luser32 -lkernel32 -s
+          gcc src\main.c src\engine.c src\util.c src\res_res.o -o dist\GrabStorm.exe `
+            -mwindows -O1 `
+            -lwinhttp -lws2_32 -ladvapi32 -lcomctl32 -lshell32 -lole32 -lgdi32 -luser32 -s
           if ($LASTEXITCODE -ne 0) { throw "gcc failed" }
-          Get-Item dist\TurboGrab.exe | Select-Object Name,Length
+          Get-Item dist\GrabStorm.exe | Select-Object Name,Length
 
-      # ext zips are packaged FIRST: installer.iss bundles them into {app}\extensions
+      # ext zips are packaged FIRST: installer.iss does not bundle them, but the
+      # release job needs the folder layout — keep here for symmetry with dist
       - name: Package browser extensions
         shell: pwsh
         run: |
@@ -49,8 +50,8 @@ jobs:
           Copy-Item extension\* extchrome\ -Recurse -Exclude manifest.firefox.json
           Copy-Item extension\* extfirefox\ -Recurse -Exclude manifest.json
           Rename-Item extfirefox\manifest.firefox.json manifest.json
-          Compress-Archive -Path extchrome\* -DestinationPath Output\TurboGrab_Extension_Chrome.zip -Force
-          Compress-Archive -Path extfirefox\* -DestinationPath Output\TurboGrab_Extension_Firefox.zip -Force
+          Compress-Archive -Path extchrome\* -DestinationPath Output\GrabStorm_Extension_Chrome.zip -Force
+          Compress-Archive -Path extfirefox\* -DestinationPath Output\GrabStorm_Extension_Firefox.zip -Force
 
       - name: Build installer
         shell: pwsh
@@ -62,22 +63,22 @@ jobs:
       - name: Build portable zip
         shell: pwsh
         run: |
-          Compress-Archive -Path dist\* -DestinationPath Output\TurboGrab_Portable.zip -Force
+          Compress-Archive -Path dist\* -DestinationPath Output\GrabStorm_Portable.zip -Force
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: turbograb-build
+          name: grabstorm-build
           if-no-files-found: error
           path: |
-            dist/TurboGrab.exe
+            dist/GrabStorm.exe
             dist/LICENSE.txt
             dist/README.md
             Output/*.exe
             Output/*.zip
 
   release:
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/grabstorm-v') || startsWith(github.ref, 'refs/tags/v')
     needs: build
     runs-on: ubuntu-latest
     env:
@@ -90,43 +91,44 @@ jobs:
       - name: Download artifact
         uses: actions/download-artifact@v4
         with:
-          name: turbograb-build
+          name: grabstorm-build
           path: artifact
 
       - name: Flatten artifact tree
         run: |
           mkdir -p rel
-          find artifact -type f \( -name "*_Setup.exe" -o -name "*Portable.zip" -o -name "TurboGrab_Extension_*.zip" \) -exec mv {} rel/ \;
+          find artifact -type f \( -name "*_Setup.exe" -o -name "*Portable.zip" -o -name "GrabStorm_Extension_*.zip" \) -exec mv {} rel/ \;
           ls -la rel/
 
       - name: Pack CRX3 + build hosted update files
         run: |
-          VER="${GITHUB_REF_NAME#v}"
+          VER="${GITHUB_REF_NAME#grabstorm-v}"
+          VER="${VER#v}"
           rm -rf stage hosted && mkdir -p stage hosted
-          (cd stage && unzip -q ../rel/TurboGrab_Extension_Chrome.zip)
-          python3 scripts/pack_crx3.py stage signing/turbograb-ext.pem hosted/TurboGrab.crx
-          cp rel/TurboGrab_Extension_Firefox.zip hosted/TurboGrab.xpi
+          (cd stage && unzip -q ../rel/GrabStorm_Extension_Chrome.zip)
+          python3 scripts/pack_crx3.py stage signing/grabstorm-ext.pem hosted/GrabStorm.crx
+          cp rel/GrabStorm_Extension_Firefox.zip hosted/GrabStorm.xpi
           cat > hosted/update.xml <<XML
           <?xml version="1.0" encoding="UTF-8"?>
           <gupdate xmlns="http://www.google.com/update2/response" protocol="2.0">
             <app appid="${EXT_ID}">
-              <updatecheck codebase="${PAGES_BASE}/TurboGrab.crx" version="${VER}" />
+              <updatecheck codebase="${PAGES_BASE}/GrabStorm.crx" version="${VER}" />
             </app>
           </gupdate>
           XML
           cat > hosted/index.html <<HTML
           <!doctype html>
           <meta charset="utf-8">
-          <title>TurboGrab extension hosting</title>
-          <p>Self-hosted update files for the TurboGrab browser extension (policy-installed by TurboGrab Setup).</p>
+          <title>GrabStorm extension hosting</title>
+          <p>Self-hosted update files for the GrabStorm Integration browser extension (policy-installed by GrabStorm Setup).</p>
           <ul>
             <li><a href="update.xml">update.xml</a></li>
-            <li><a href="TurboGrab.crx">TurboGrab.crx</a></li>
-            <li><a href="TurboGrab.xpi">TurboGrab.xpi</a></li>
+            <li><a href="GrabStorm.crx">GrabStorm.crx</a></li>
+            <li><a href="GrabStorm.xpi">GrabStorm.xpi</a></li>
           </ul>
           HTML
-          cp hosted/TurboGrab.crx hosted/TurboGrab.xpi hosted/update.xml rel/
-          python3 scripts/verify_crx3.py hosted/TurboGrab.crx signing/turbograb-ext.pem
+          cp hosted/GrabStorm.crx hosted/GrabStorm.xpi hosted/update.xml rel/
+          python3 scripts/verify_crx3.py hosted/GrabStorm.crx signing/grabstorm-ext.pem
           ls -la hosted/
 
       - name: Publish hosted update files (gh-pages)
@@ -134,8 +136,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
-          git config user.name "3SVerse CI"
-          git config user.email "abaduchanna@gmail.com"
           rm -rf pages && mkdir pages && cd pages
           git init -q -b gh-pages
           git config user.name "3SVerse CI"
@@ -151,17 +151,19 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: |
           TAG="${GITHUB_REF_NAME}"
-          NOTES="Free & open download accelerator for Windows — multi-segment HTTP(S) downloads with pause/resume, queue, clipboard monitoring, category folders and browser extension integration. MIT licensed.
+          VER="${TAG#grabstorm-v}"
+          VER="${VER#v}"
+          NOTES="GrabStorm — a free, open multi-segment download accelerator for Windows. Dynamic file segmentation (up to 32 connections), pause/resume with state files, download queue, clipboard monitoring and browser integration. MIT licensed, 100% local, no cloud, no tracking.
 
-          **New in ${TAG}:** the Setup now auto-installs the TurboGrab Integration extension into every installed Chromium browser (Chrome, Edge, Brave, Opera, Vivaldi, Yandex) and Firefox via per-user policies — no store needed, no admin prompt. Restart your browser once after installing. Uninstalling TurboGrab removes the integration cleanly. Manual zips remain available below.
+          **Browser integration:** Setup auto-installs the GrabStorm Integration extension into every installed Chromium browser (Chrome, Edge, Brave, Opera, Vivaldi, Yandex) and Firefox via per-user policies — no store needed, no admin prompt. Restart your browsers once after installing. Uninstalling GrabStorm removes the integration cleanly.
 
-          - TurboGrab_v${TAG#v}_Setup.exe — installer (no admin needed)
-          - TurboGrab_Portable.zip — unzip anywhere and run TurboGrab.exe
-          - TurboGrab.crx + update.xml — self-hosted policy-install source (served at ${PAGES_BASE})
-          - TurboGrab.xpi / TurboGrab_Extension_Firefox.zip — Firefox add-on (release-channel Firefox requires signed add-ons; load temporarily via about:debugging, or use ESR/Dev where policy install works)
-          - TurboGrab_Extension_Chrome.zip — manual option: chrome://extensions > Developer mode > Load unpacked"
+          - GrabStorm_v${VER}_Setup.exe — installer (no admin needed)
+          - GrabStorm_Portable.zip — unzip anywhere and run GrabStorm.exe
+          - GrabStorm.crx + update.xml — self-hosted policy-install source (served at ${PAGES_BASE})
+          - GrabStorm.xpi / GrabStorm_Extension_Firefox.zip — Firefox add-on (release-channel Firefox requires signed add-ons; load temporarily via about:debugging, or use ESR/Dev where policy install works)
+          - GrabStorm_Extension_Chrome.zip — manual option: chrome://extensions > Developer mode > Load unpacked"
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" rel/* --clobber
           else
-            gh release create "$TAG" rel/* --title "TurboGrab ${TAG}" --notes "$NOTES"
+            gh release create "$TAG" rel/* --title "GrabStorm ${VER}" --notes "$NOTES"
           fi

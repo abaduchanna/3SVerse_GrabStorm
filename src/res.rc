@@ -1,0 +1,34 @@
+/* GrabStorm resources — icon, version, manifest, brand art (RCDATA) */
+
+1 ICON "res/icon.ico"
+
+1 VERSIONINFO
+FILEVERSION     1,0,0,0
+PRODUCTVERSION  1,0,0,0
+FILEOS          0x40004L
+FILETYPE        0x1L
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904B0"
+        BEGIN
+            VALUE "FileDescription",  "GrabStorm - 3SVerse multi-segment download accelerator"
+            VALUE "FileVersion",      "1.0.0.0"
+            VALUE "ProductName",      "GrabStorm"
+            VALUE "ProductVersion",   "1.0.0"
+            VALUE "LegalCopyright",   "MIT License - Copyright (c) 2026 Abad Umair Channa / 3S Verse"
+            VALUE "OriginalFilename", "GrabStorm.exe"
+            VALUE "CompanyName",      "3SVerse"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x409, 1200
+    END
+END
+
+1 24 "res/app.manifest"
+
+101 RCDATA "res/logo.png"
+102 RCDATA "res/spiral.png"
+103 RCDATA "res/orb.png"
