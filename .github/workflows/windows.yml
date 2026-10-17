@@ -2,7 +2,7 @@ name: Build GrabStorm
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main, 'fix/**' ]
     tags: [ 'v*', 'grabstorm-v*' ]
   workflow_dispatch:
 
