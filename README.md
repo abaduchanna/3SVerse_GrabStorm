@@ -9,6 +9,10 @@ takes it from there, with no extra dialogs.
 > GrabStorm is an independent, clean-room implementation — it contains no code,
 > assets or resources from any other download manager. MIT licensed.
 
+---
+
+**GrabStorm** is part of the [3SVerse](https://3sverse.com) suite — software, systems & operations for wireless dealers and beyond. More free tools at [3sverse.com](https://3sverse.com).
+
 ![brand](https://img.shields.io/badge/3SVerse-GrabStorm-6ee7ef)
 
 ---
