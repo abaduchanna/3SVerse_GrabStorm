@@ -20,6 +20,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <ctype.h>
 
 #include "bridge.h"
 #include "util.h"
@@ -28,6 +29,7 @@
 #define MAX_HDR   16384
 #define MAX_BODY  65536
 #define RECV_TIMEOUT_MS 4000
+#define CHROME_EXT_ORIGIN "chrome-extension://ooclbgcgolihefahehfjjcmlfdlhncno"
 
 static HWND      g_main   = NULL;
 static SOCKET    g_listen = INVALID_SOCKET;
@@ -38,6 +40,22 @@ static int       g_port   = BRIDGE_DEFAULT_PORT;
 static wchar_t   g_token[128] = L"";
 static CRITICAL_SECTION g_cs;
 static LONG      g_csInit = 0;
+static const char *StrIFind(const char *hay, const char *needle);
+
+static BOOL HeaderValueEquals(const char *headers, const char *name, const char *expected)
+{
+    char pattern[80];
+    const char *p;
+    int n;
+    _snprintf(pattern, sizeof(pattern), "\r\n%s:", name);
+    p = StrIFind(headers, pattern);
+    if (!p) return FALSE;
+    p += strlen(pattern);
+    while (*p == ' ' || *p == '\t') p++;
+    n = 0;
+    while (p[n] && p[n] != '\r' && p[n] != '\n') n++;
+    return n == (int)strlen(expected) && _strnicmp(p, expected, (size_t)n) == 0;
+}
 
 static void EnsureCs(void)
 {
@@ -71,10 +89,26 @@ static void LoadSettings(void)
 /* ------------------------------------------------------------------ */
 /* small helpers                                                       */
 /* ------------------------------------------------------------------ */
-static BOOL HostOk(const char *host)
+static BOOL HostOk(const char *headers)
 {
-    if (!host || !*host) return FALSE;
-    return strstr(host, "127.0.0.1") != NULL || strstr(host, "localhost") != NULL;
+    char value[128];
+    int n = 0;
+    const char *p;
+    if (!headers || !*headers) return FALSE;
+    p = StrIFind(headers, "\r\nHost:");
+    if (!p) return FALSE;
+    p += 7;
+    while (*p == ' ' || *p == '\t') p++;
+    while (p[n] && p[n] != '\r' && p[n] != '\n' && n < (int)sizeof(value) - 1) {
+        value[n] = (char)tolower((unsigned char)p[n]);
+        n++;
+    }
+    value[n] = 0;
+    if (strcmp(value, "localhost") == 0) return TRUE;
+    if (strncmp(value, "localhost:", 10) == 0) return TRUE;
+    if (strcmp(value, "127.0.0.1") == 0) return TRUE;
+    if (strncmp(value, "127.0.0.1:", 10) == 0) return TRUE;
+    return FALSE;
 }
 
 static void SendAll(SOCKET s, const char *buf, int len)
@@ -189,11 +223,12 @@ static long long JsonGetInt(const char *body, const char *key)
 
 static BOOL TokenOk(const char *headers, const char *path)
 {
+    static const char tokenHeader[] = "\r\nX-GrabStorm-Token:";
     wchar_t got[128];
     /* header form */
-    const char *h = strstr(headers, "X-GrabStorm-Token:");
+    const char *h = StrIFind(headers, tokenHeader);
     if (h) {
-        h += 18;
+        h += strlen(tokenHeader);
         while (*h == ' ') h++;
         int n = 0;
         while (h[n] && h[n] != '\r' && h[n] != '\n' && n < 127) n++;
@@ -244,8 +279,7 @@ static BOOL SchemeOk(const wchar_t *u)
 {
     if (!u[0]) return FALSE;
     return PrefixIW(u, L"http://") == u + 7
-        || PrefixIW(u, L"https://") == u + 8
-        || PrefixIW(u, L"ftp://") == u + 6;
+        || PrefixIW(u, L"https://") == u + 8;
 }
 
 /* ------------------------------------------------------------------ */
@@ -255,7 +289,7 @@ static void HandleConn(SOCKET s)
 {
     char  hdr[MAX_HDR + 1];
     char *body = NULL;
-    int   hlen = 0, blen = 0;
+    int   hlen = 0, blen = 0, bodyOwned = 0;
 
     /* read until \r\n\r\n or cap */
     while (hlen < MAX_HDR) {
@@ -265,25 +299,35 @@ static void HandleConn(SOCKET s)
         hdr[hlen] = 0;
         char *end = strstr(hdr, "\r\n\r\n");
         if (end) {
-            body = end + 4;
-            int have = hlen - (int)(body - hdr);
+            char *payload = end + 4;
+            int have = hlen - (int)(payload - hdr);
+            *end = 0; /* subsequent header searches must never scan request body */
             /* find content-length */
             const char *cl = StrIFind(hdr, "Content-Length:");
             long want = 0;
-            if (cl) want = strtol(cl + 15, NULL, 10);            if (want > MAX_BODY) { SendResponse(s, 400, "text/plain", "too large", 9, 1); goto done; }
+            if (cl) want = strtol(cl + 15, NULL, 10);
+            if (want < 0 || want > MAX_BODY) {
+                SendResponse(s, 400, "text/plain", "too large", 9, 1);
+                goto done;
+            }
             if (want > 0) {
                 body = (char *)HeapAlloc(GetProcessHeap(), 0, want + 1);
                 if (!body) goto done;
-                memcpy(body, end + 4, (size_t)have);
+                bodyOwned = 1;
+                if (have > want) have = (int)want;
+                memcpy(body, payload, (size_t)have);
                 while (have < want) {
                     int m = recv(s, body + have, (int)(want - have), 0);
                     if (m <= 0) break;
                     have += m;
                 }
+                if (have != want) {
+                    SendResponse(s, 400, "text/plain", "short body", 10, 1);
+                    goto done;
+                }
                 body[have] = 0;
                 blen = have;
             } else {
-                *end = 0;
                 blen = 0;
                 body = NULL;
             }
@@ -304,8 +348,7 @@ static void HandleConn(SOCKET s)
     }
 
     /* DNS-rebinding shield: Host must be loopback */
-    const char *host = StrIFind(hdr, "Host:");
-    if (!HostOk(host)) { SendResponse(s, 403, "text/plain", "bad host", 8, 0); goto done; }
+    if (!HostOk(hdr)) { SendResponse(s, 403, "text/plain", "bad host", 8, 0); goto done; }
 
     if (lstrcmpA(method, "OPTIONS") == 0) {
         SendResponse(s, 204, "text/plain", NULL, 0, 1);
@@ -319,6 +362,22 @@ static void HandleConn(SOCKET s)
         }
         if (strstr(path, "/ping")) {
             SendResponse(s, 200, "text/plain", "grabstorm", 9, 1);
+            goto done;
+        }
+        if (strstr(path, "/token")) {
+            char tok8[256], json[320];
+            int jn;
+            if (!HeaderValueEquals(hdr, "Origin", CHROME_EXT_ORIGIN)) {
+                SendResponse(s, 403, "text/plain", "forbidden", 9, 1);
+                goto done;
+            }
+            WideToUtf8(g_token, tok8, (int)sizeof(tok8));
+            jn = _snprintf(json, sizeof(json), "{\"token\":\"%s\"}", tok8);
+            if (jn < 0 || jn >= (int)sizeof(json)) {
+                SendResponse(s, 503, "text/plain", "unavailable", 11, 1);
+                goto done;
+            }
+            SendResponse(s, 200, "application/json", json, jn, 1);
             goto done;
         }
         SendResponse(s, 404, "text/plain", "nf", 2, 1);
@@ -363,7 +422,7 @@ static void HandleConn(SOCKET s)
     SendResponse(s, 404, "text/plain", "nf", 2, 1);
 
 done:
-    if (body && blen > 0) HeapFree(GetProcessHeap(), 0, body);
+    if (bodyOwned && body) HeapFree(GetProcessHeap(), 0, body);
 }
 
 /* ------------------------------------------------------------------ */

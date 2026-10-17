@@ -31,6 +31,8 @@ typedef struct Segment {
 typedef struct Job {
     int               id;
     wchar_t           url[2048];
+    wchar_t           referrer[2048];
+    wchar_t           cookie[1024];
     wchar_t           file[MAX_PATH];  /* full save path (may be empty until probe) */
     wchar_t           dir[MAX_PATH];
     unsigned __int64  total;           /* 0 = unknown */
@@ -62,6 +64,9 @@ Job *EngineFirst(void);
 Job *EngineById(int id);
 Job *EngineAt(int index);
 int  EngineAdd(const wchar_t *url, const wchar_t *dir, const wchar_t *name, int startNow);
+int  EngineAddWithContext(const wchar_t *url, const wchar_t *dir, const wchar_t *name,
+                          const wchar_t *referrer, const wchar_t *cookie,
+                          unsigned __int64 expectedSize, int startNow);
 void EngineStart(int id);          /* queued -> run (with resume attempt) */
 void EngineStop(int id);           /* pause/stop, resumable               */
 void EngineResume(int id);         /* paused/error -> run again           */
@@ -76,5 +81,6 @@ void EngineSetMaxActive(int n);
 int  EngineGetSegments(void);
 int  EngineGetMaxActive(void);
 void EngineDefaultDir(wchar_t *out, int cap);
+void EnginePersist(void);       /* atomically save the restart-safe queue */
 
 #endif

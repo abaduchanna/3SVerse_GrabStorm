@@ -22,16 +22,16 @@ takes it from there, with no extra dialogs.
 | Feature | Details |
 |---|---|
 | Multi-segment acceleration | Files split across up to **32 parallel HTTP range connections**; a finished connection dynamically steals the tail of the largest remaining segment, so slow segments never stall the whole download |
-| Resume & pause | Every download keeps a `.gstmeta` state file with segment positions; pause, stop, close the app, even reboot — Resume continues exactly where it left off (validated against ETag / Last-Modified so the file can't be stitched from different versions) |
-| Queue | Unlimited list with a configurable number of **max active downloads** (1–10); queued items start automatically as slots free up |
+| Resume & pause | Every download keeps an atomic `.gstmeta` checkpoint with segment positions; pause, stop, close the app, even reboot — the queue is restored and range-capable downloads continue exactly where they left off (validated against URL, ETag / Last-Modified and size) |
+| Queue | Restart-safe unlimited list with a configurable number of **max active downloads** (1–10); queued items start automatically as slots free up |
 | Retry with backoff | Broken connections reconnect at the exact byte position (up to 8 attempts with growing delays) |
 | Unknown-size streaming | Servers without range support are handled with a single robust stream, still fully resumable across restarts |
 | Clipboard monitor | Copy a link to an installer/archive/media file and GrabStorm opens the grab dialog for you (on/off in Options) |
 | Browser integration | The bundled **GrabStorm Integration** extension adds a right-click *Download with GrabStorm* action and auto-captures direct file links; Setup can auto-install it into every Chromium browser and Firefox via per-user policies |
-| **Silent capture bridge** | The desktop app runs a token-authed HTTP bridge on `127.0.0.1` — the extension probes it (`/status/204+grabstorm`), then POSTs captures directly into the queue. No protocol dialogs, no tab flash, nothing to click. The bridge is loopback-only, DNS-rebinding shielded and off by default when disabled in Options |
+| **Silent capture bridge** | The desktop app runs a token-authenticated HTTP bridge on `127.0.0.1`. The pinned official Chrome/Chromium extension pairs with it automatically, then POSTs captures directly into the queue. No protocol dialogs, no tab flash, nothing to click. The bridge is loopback-only, DNS-rebinding shielded and can be disabled in Options |
 | **Download takeover** | When a browser starts downloading a capturable file type (installers, archives, media, documents…), the extension cancels the browser's slow single-stream fetch and re-routes it into GrabStorm's segmented engine. Optionally intercept *every* download |
 | **Video panel & sniffing** | A small gradient **GrabStorm pill** appears next to `<video>`/`<audio>` players; media requests (mp4/mkv/webm/m3u8-style streams) are sniffed in the background so the best candidate is one click away |
-| Cookies & referrer preserved | Captures carry the page referrer and the site's cookies from the browser session, so authenticated downloads (premium file hosts) keep working |
+| Cookies & referrer preserved | Captures carry the page referrer and the site's cookies into every probe and segment request, so authenticated downloads work. Session cookies stay in memory and are never written to the queue file |
 | `grabstorm://` protocol | Any app or web page can hand a URL to GrabStorm via `grabstorm://add?u=<url>&r=<referrer>` |
 | 3SVerse brand UI | Full xfer design system: the 3SVerse wordmark, hero spiral, glossy orb, cards and cyan→magenta CTAs — with proper **dark and light themes** (persisted, DWM-aware title bar) |
 | Tray resident | Close the window and GrabStorm keeps working from the tray; completion and error balloon notifications |
@@ -48,11 +48,12 @@ which are shown in bytes (`KB`, `MB`, `GB`) — 8 bits = 1 byte.
 ## Install
 
 ### Setup (recommended)
-1. Download `GrabStorm_v1.2.0_Setup.exe` from the [releases page](https://github.com/abaduchanna/3SVerse_GrabStorm/releases).
+1. Download `GrabStorm_v1.3.0_Setup.exe` from the [releases page](https://github.com/abaduchanna/3SVerse_GrabStorm/releases).
 2. Run it — no admin rights needed (installs per-user).
-3. Keep **Auto-install the GrabStorm browser extension** checked; the installer
-   writes per-user policies for every Chromium browser it finds
-   (Chrome, Edge, Brave, Opera, Vivaldi, Yandex) plus Firefox.
+3. Keep **Auto-install GrabStorm Integration** checked; the installer writes
+   persistent per-user policies for Chrome, Edge, Brave, Opera, Vivaldi,
+   Yandex, Chromium and Firefox. These are pre-provisioned even for supported
+   browsers installed later, so the browser picks up the extension on launch.
 4. **Restart your browsers once** — policy-installed extensions load at browser start.
 5. Right-click any file link → *Download with GrabStorm*.
 
@@ -62,7 +63,7 @@ and the `grabstorm://` protocol are not registered by the portable build.
 
 ## Browser extension details
 
-- Chromium browsers load the extension through `ExtensionInstallForcelist` +
+- Supported Chromium browsers load the extension through `ExtensionInstallForcelist` +
   `ExtensionInstallSources` user policies pointing at the self-hosted CRX3 on
   GitHub Pages (`update.xml` at `https://abaduchanna.github.io/3SVerse_GrabStorm/update.xml`).
 - Firefox: the XPI is registered via the Firefox `Extensions\Install` policy — this

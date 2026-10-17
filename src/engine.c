@@ -21,6 +21,129 @@ static int  g_segments = 8;
 static int  g_maxActive = 3;
 static int  g_active = 0, g_queued = 0, g_done = 0;
 static double g_agg = 0.0;
+static ULONGLONG g_lastCheckpoint = 0;
+
+#define QUEUE_MAGIC   0x31515347u /* GSQ1 */
+#define QUEUE_VERSION 1u
+
+typedef struct {
+    DWORD magic, version, count, nextId;
+} QUEUEHDR;
+
+typedef struct {
+    int id, state;
+    unsigned __int64 total, got;
+    wchar_t url[2048], referrer[2048], cookie[1024];
+    wchar_t file[MAX_PATH], dir[MAX_PATH];
+    wchar_t etag[128], lastmod[96], err[256];
+} QUEUEREC;
+
+static void QueuePath(wchar_t *out, int cap)
+{
+    wchar_t base[MAX_PATH], d1[MAX_PATH], d2[MAX_PATH];
+    if (!GetEnvironmentVariableW(L"LOCALAPPDATA", base, MAX_PATH)) {
+        out[0] = 0;
+        return;
+    }
+    _snwprintf(d1, MAX_PATH, L"%s\\3SVerse", base);
+    _snwprintf(d2, MAX_PATH, L"%s\\GrabStorm", d1);
+    CreateDirectoryW(d1, NULL);
+    CreateDirectoryW(d2, NULL);
+    _snwprintf(out, cap, L"%s\\queue.dat", d2);
+    out[cap - 1] = 0;
+}
+
+static void InitLoadedJob(Job *j)
+{
+    InitializeCriticalSection(&j->cs);
+    j->cancelEvt = CreateEventW(NULL, TRUE, FALSE, NULL);
+    j->hThread = NULL;
+    j->resume = 1;
+    j->nseg = g_segments;
+    if (j->state == ST_CONNECTING || j->state == ST_DOWNLOADING)
+        j->state = ST_PAUSED;
+}
+
+static void LoadQueueState(void)
+{
+    wchar_t path[MAX_PATH];
+    FILE *f;
+    QUEUEHDR h;
+    DWORD i;
+    Job *tail = NULL;
+    QueuePath(path, MAX_PATH);
+    if (!path[0] || !(f = _wfopen(path, L"rb"))) return;
+    if (fread(&h, sizeof(h), 1, f) != 1 || h.magic != QUEUE_MAGIC ||
+        h.version != QUEUE_VERSION || h.count > 10000) {
+        fclose(f);
+        return;
+    }
+    for (i = 0; i < h.count; i++) {
+        QUEUEREC r;
+        Job *j;
+        if (fread(&r, sizeof(r), 1, f) != 1) break;
+        r.url[2047] = r.referrer[2047] = r.cookie[1023] = 0;
+        r.file[MAX_PATH - 1] = r.dir[MAX_PATH - 1] = 0;
+        r.etag[127] = r.lastmod[95] = r.err[255] = 0;
+        if (!r.url[0]) continue;
+        j = (Job *)HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(Job));
+        if (!j) break;
+        j->id = r.id;
+        j->state = r.state;
+        j->total = r.total;
+        j->got = (LONG64)r.got;
+        lstrcpynW(j->url, r.url, 2048);
+        lstrcpynW(j->referrer, r.referrer, 2048);
+        lstrcpynW(j->cookie, r.cookie, 1024);
+        lstrcpynW(j->file, r.file, MAX_PATH);
+        lstrcpynW(j->dir, r.dir, MAX_PATH);
+        lstrcpynW(j->etag, r.etag, 128);
+        lstrcpynW(j->lastmod, r.lastmod, 96);
+        lstrcpynW(j->err, r.err, 256);
+        InitLoadedJob(j);
+        if (tail) tail->next = j; else g_jobs = j;
+        tail = j;
+        if (j->id >= g_nextId) g_nextId = j->id + 1;
+    }
+    if ((int)h.nextId > g_nextId) g_nextId = (int)h.nextId;
+    fclose(f);
+}
+
+void EnginePersist(void)
+{
+    wchar_t path[MAX_PATH], tmp[MAX_PATH + 8];
+    FILE *f;
+    Job *j;
+    QUEUEHDR h;
+    QueuePath(path, MAX_PATH);
+    if (!path[0]) return;
+    _snwprintf(tmp, MAX_PATH + 8, L"%s.tmp", path);
+    f = _wfopen(tmp, L"wb");
+    if (!f) return;
+    h.magic = QUEUE_MAGIC;
+    h.version = QUEUE_VERSION;
+    h.count = (DWORD)EngineCount();
+    h.nextId = (DWORD)g_nextId;
+    if (fwrite(&h, sizeof(h), 1, f) != 1) { fclose(f); DeleteFileW(tmp); return; }
+    for (j = g_jobs; j; j = j->next) {
+        QUEUEREC r;
+        ZeroMemory(&r, sizeof(r));
+        r.id = j->id; r.state = j->state;
+        r.total = j->total; r.got = (unsigned __int64)j->got;
+        lstrcpynW(r.url, j->url, 2048);
+        lstrcpynW(r.referrer, j->referrer, 2048);
+        /* Session cookies are intentionally not persisted as plaintext. */
+        lstrcpynW(r.file, j->file, MAX_PATH);
+        lstrcpynW(r.dir, j->dir, MAX_PATH);
+        lstrcpynW(r.etag, j->etag, 128);
+        lstrcpynW(r.lastmod, j->lastmod, 96);
+        lstrcpynW(r.err, j->err, 256);
+        if (fwrite(&r, sizeof(r), 1, f) != 1) { fclose(f); DeleteFileW(tmp); return; }
+    }
+    fflush(f);
+    fclose(f);
+    MoveFileExW(tmp, path, MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH);
+}
 
 /* ------------------------------------------------------------------ */
 /* settings                                                           */
@@ -63,6 +186,7 @@ void EngineInit(HWND main)
     g_maxActive = SettingsGetInt(L"MaxActive", 3);
     if (g_maxActive < 1) g_maxActive = 1;
     if (g_maxActive > 10) g_maxActive = 10;
+    LoadQueueState();
 }
 
 int EngineCount(void)
@@ -125,11 +249,13 @@ static HINTERNET OpenSession(void)
     return s;
 }
 
-static HINTERNET OpenRequest(HINTERNET c, const URLPARTS *up, const wchar_t *range)
+static HINTERNET OpenRequest(HINTERNET c, const URLPARTS *up, const wchar_t *method,
+                            const wchar_t *range, const Job *j)
 {
     DWORD flags = up->https ? WINHTTP_FLAG_SECURE : 0;
     DWORD pol = WINHTTP_OPTION_REDIRECT_POLICY_ALWAYS;
-    HINTERNET r = WinHttpOpenRequest(c, L"GET", up->path, NULL, WINHTTP_NO_REFERER,
+    HINTERNET r = WinHttpOpenRequest(c, method ? method : L"GET", up->path, NULL,
+                                     (j && j->referrer[0]) ? j->referrer : WINHTTP_NO_REFERER,
                                      WINHTTP_DEFAULT_ACCEPT_TYPES, flags);
     if (!r) return NULL;
     WinHttpSetOption(r, WINHTTP_OPTION_REDIRECT_POLICY, &pol, sizeof(pol));
@@ -137,6 +263,12 @@ static HINTERNET OpenRequest(HINTERNET c, const URLPARTS *up, const wchar_t *ran
         wchar_t hdr[160];
         _snwprintf(hdr, 160, L"Range: %s\r\n", range);
         WinHttpAddRequestHeaders(r, hdr, (DWORD)-1, WINHTTP_ADDREQ_FLAG_ADD);
+    }
+    if (j && j->cookie[0]) {
+        wchar_t hdr[1200];
+        _snwprintf(hdr, 1200, L"Cookie: %s\r\n", j->cookie);
+        WinHttpAddRequestHeaders(r, hdr, (DWORD)-1,
+                                 WINHTTP_ADDREQ_FLAG_ADD | WINHTTP_ADDREQ_FLAG_REPLACE);
     }
     if (!WinHttpSendRequest(r, WINHTTP_NO_ADDITIONAL_HEADERS, 0,
                             WINHTTP_NO_REQUEST_DATA, 0, 0, 0) ||
@@ -223,10 +355,17 @@ static BOOL Probe(Job *j, PROBE *pr)
     {
         DWORD flags = up.https ? WINHTTP_FLAG_SECURE : 0;
         DWORD pol = WINHTTP_OPTION_REDIRECT_POLICY_ALWAYS;
-        r = WinHttpOpenRequest(c, L"HEAD", up.path, NULL, WINHTTP_NO_REFERER,
+        r = WinHttpOpenRequest(c, L"HEAD", up.path, NULL,
+                               j->referrer[0] ? j->referrer : WINHTTP_NO_REFERER,
                                WINHTTP_DEFAULT_ACCEPT_TYPES, flags);
         if (r) {
             WinHttpSetOption(r, WINHTTP_OPTION_REDIRECT_POLICY, &pol, sizeof(pol));
+            if (j->cookie[0]) {
+                wchar_t hdr[1200];
+                _snwprintf(hdr, 1200, L"Cookie: %s\r\n", j->cookie);
+                WinHttpAddRequestHeaders(r, hdr, (DWORD)-1,
+                                         WINHTTP_ADDREQ_FLAG_ADD | WINHTTP_ADDREQ_FLAG_REPLACE);
+            }
             if (WinHttpSendRequest(r, WINHTTP_NO_ADDITIONAL_HEADERS, 0,
                                    WINHTTP_NO_REQUEST_DATA, 0, 0, 0) &&
                 WinHttpReceiveResponse(r, NULL)) {
@@ -254,7 +393,7 @@ static BOOL Probe(Job *j, PROBE *pr)
 
     if (!ok || pr->ranges != 1) {
         /* range-GET probe: bytes=0-0 */
-        r = OpenRequest(c, &up, L"bytes=0-0");
+        r = OpenRequest(c, &up, L"GET", L"bytes=0-0", j);
         if (r) {
             code = QueryStatus(r);
             if (code == 206) {
@@ -326,13 +465,23 @@ static void MetaPath(const Job *j, wchar_t *out, int cap)
 
 static void SaveMeta(Job *j)
 {
-    wchar_t mp[MAX_PATH + 16];
+    wchar_t mp[MAX_PATH + 16], tmp[MAX_PATH + 24];
     FILE *f;
     char u8[4200];
-    int i;
+    int i, nseg;
+    Segment segs[GS_MAXSEG];
+    unsigned __int64 total;
     if (!j->file[0]) return;
-    MetaPath(j, mp, MAX_PATH);
-    f = _wfopen(mp, L"wb");
+    MetaPath(j, mp, MAX_PATH + 16);
+    _snwprintf(tmp, MAX_PATH + 24, L"%s.tmp", mp);
+    EnterCriticalSection(&j->cs);
+    nseg = j->nseg;
+    total = j->total;
+    if (nseg < 0) nseg = 0;
+    if (nseg > GS_MAXSEG) nseg = GS_MAXSEG;
+    memcpy(segs, j->segs, (size_t)nseg * sizeof(Segment));
+    LeaveCriticalSection(&j->cs);
+    f = _wfopen(tmp, L"wb");
     if (!f) return;
     WideToUtf8(j->url, u8, 4200);
     fprintf(f, "url=%s\n", u8);
@@ -340,17 +489,20 @@ static void SaveMeta(Job *j)
     fprintf(f, "etag=%s\n", u8);
     WideToUtf8(j->lastmod, u8, 4200);
     fprintf(f, "lastmod=%s\n", u8);
-    fprintf(f, "total=%I64u\n", j->total);
-    fprintf(f, "nseg=%d\n", j->nseg);
-    for (i = 0; i < j->nseg; i++)
+    fprintf(f, "total=%I64u\n", total);
+    fprintf(f, "nseg=%d\n", nseg);
+    for (i = 0; i < nseg; i++)
         fprintf(f, "seg=%I64u %I64u %I64u\n",
-                j->segs[i].start, j->segs[i].end, j->segs[i].pos);
+                segs[i].start, segs[i].end, segs[i].pos);
+    fflush(f);
     fclose(f);
+    MoveFileExW(tmp, mp, MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH);
 }
 
 typedef struct {
     ULONGLONG total;
     int nseg;
+    wchar_t url[2048];
     wchar_t etag[128], lastmod[96];
 } META;
 
@@ -362,7 +514,7 @@ static BOOL LoadMeta(Job *j, META *m)
     int cnt = 0, i;
     ZeroMemory(m, sizeof(*m));
     if (!j->file[0]) return FALSE;
-    MetaPath(j, mp, MAX_PATH);
+    MetaPath(j, mp, MAX_PATH + 16);
     f = _wfopen(mp, L"rb");
     if (!f) return FALSE;
     ZeroMemory(j->segs, sizeof(j->segs));
@@ -370,7 +522,7 @@ static BOOL LoadMeta(Job *j, META *m)
         size_t L = strlen(line);
         while (L && (line[L - 1] == '\n' || line[L - 1] == '\r')) line[--L] = 0;
         if (strncmp(line, "url=", 4) == 0) {
-            Utf8ToWide(line + 4, j->url, 2048);
+            Utf8ToWide(line + 4, m->url, 2048);
         } else if (strncmp(line, "etag=", 5) == 0) {
             Utf8ToWide(line + 5, m->etag, 128);
         } else if (strncmp(line, "lastmod=", 8) == 0) {
@@ -391,7 +543,7 @@ static BOOL LoadMeta(Job *j, META *m)
         }
     }
     fclose(f);
-    if (cnt <= 0) return FALSE;
+    if (cnt <= 0 || !m->url[0] || lstrcmpW(m->url, j->url) != 0) return FALSE;
     /* sanity: pos inside [start,end] */
     for (i = 0; i < cnt; i++) {
         Segment *s = &j->segs[i];
@@ -520,7 +672,8 @@ static DWORD WINAPI SegThread(LPVOID p)
         if (segEnd != (unsigned __int64)(-1) && from >= segEnd) break;
 
         MakeRange(rng, 80, from, segEnd == (unsigned __int64)(-1) ? (unsigned __int64)(-1) : segEnd - 1);
-        r = OpenRequest(c, &up, from == 0 && segEnd == (unsigned __int64)(-1) ? NULL : rng);
+        r = OpenRequest(c, &up, L"GET",
+                        from == 0 && segEnd == (unsigned __int64)(-1) ? NULL : rng, j);
         if (!r) {
             if (++retry > 8) {
                 lstrcpynW(j->err, L"Request failed", 256);
@@ -668,6 +821,10 @@ static DWORD WINAPI JobThread(LPVOID p)
             resumed = TRUE;
         }
     }
+    /* A server that cannot honor Range cannot safely continue at an offset.
+       Restart that single stream instead of repeatedly failing with HTTP 200. */
+    if (resumed && j->ranges != 1 && j->nseg == 1 && j->segs[0].pos > 0)
+        resumed = FALSE;
     if (!resumed) InitSegments(j);
     for (i = 0; i < j->nseg; i++) j->segs[i].quit = 0;
 
@@ -722,7 +879,7 @@ static DWORD WINAPI JobThread(LPVOID p)
     } else if (j->noMoreData ||
                (j->total && (unsigned __int64)j->got >= j->total)) {
         wchar_t mp[MAX_PATH + 16];
-        MetaPath(j, mp, MAX_PATH);
+        MetaPath(j, mp, MAX_PATH + 16);
         DeleteFileW(mp);
         j->state = ST_DONE;
     } else {
@@ -751,7 +908,9 @@ static void StartJobThread(Job *j)
 /* ------------------------------------------------------------------ */
 /* public API                                                         */
 /* ------------------------------------------------------------------ */
-int EngineAdd(const wchar_t *url, const wchar_t *dir, const wchar_t *name, int startNow)
+int EngineAddWithContext(const wchar_t *url, const wchar_t *dir, const wchar_t *name,
+                         const wchar_t *referrer, const wchar_t *cookie,
+                         unsigned __int64 expectedSize, int startNow)
 {
     Job *j, *tail;
     if (!url || !url[0]) return -1;
@@ -759,6 +918,9 @@ int EngineAdd(const wchar_t *url, const wchar_t *dir, const wchar_t *name, int s
     if (!j) return -1;
     j->id = g_nextId++;
     lstrcpynW(j->url, url, 2048);
+    if (referrer) lstrcpynW(j->referrer, referrer, 2048);
+    if (cookie) lstrcpynW(j->cookie, cookie, 1024);
+    j->total = expectedSize;
     lstrcpynW(j->dir, dir && dir[0] ? dir : L"C:\\Users\\Public\\Downloads", MAX_PATH);
     if (name && name[0]) {
         wchar_t tmp[160];
@@ -775,8 +937,14 @@ int EngineAdd(const wchar_t *url, const wchar_t *dir, const wchar_t *name, int s
     for (tail = g_jobs; tail && tail->next; tail = tail->next) { }
     if (tail) tail->next = j; else g_jobs = j;
     if (startNow) StartJobThread(j);
+    EnginePersist();
     PostMessageW(g_ui, WM_APP_JOB, (WPARAM)j->id, 1);
     return j->id;
+}
+
+int EngineAdd(const wchar_t *url, const wchar_t *dir, const wchar_t *name, int startNow)
+{
+    return EngineAddWithContext(url, dir, name, NULL, NULL, 0, startNow);
 }
 
 void EngineStart(int id)
@@ -809,12 +977,13 @@ void EngineRemove(int id, int deleteFile)
     if (!j) return;
     if (j->state == ST_DOWNLOADING || j->state == ST_CONNECTING) {
         SetEvent(j->cancelEvt);
-        if (j->hThread) WaitForSingleObject(j->hThread, 8000);
+        /* Never free a Job while its worker can still dereference it. */
+        if (j->hThread) WaitForSingleObject(j->hThread, INFINITE);
     }
     if (deleteFile && j->file[0]) {
         wchar_t mp[MAX_PATH + 16];
         DeleteFileW(j->file);
-        MetaPath(j, mp, MAX_PATH);
+        MetaPath(j, mp, MAX_PATH + 16);
         DeleteFileW(mp);
     }
     prev = NULL;
@@ -829,6 +998,7 @@ void EngineRemove(int id, int deleteFile)
     CloseHandle(j->cancelEvt);
     DeleteCriticalSection(&j->cs);
     HeapFree(GetProcessHeap(), 0, j);
+    EnginePersist();
 }
 
 void EngineShutdown(void)
@@ -840,8 +1010,9 @@ void EngineShutdown(void)
         }
     }
     for (j = g_jobs; j; j = j->next) {
-        if (j->hThread) WaitForSingleObject(j->hThread, 6000);
+        if (j->hThread) WaitForSingleObject(j->hThread, INFINITE);
     }
+    EnginePersist();
 }
 
 void EngineTick(void)
@@ -875,6 +1046,14 @@ void EngineTick(void)
         }
     }
     g_active = active; g_queued = queued; g_done = done; g_agg = agg;
+
+    /* Crash-safe progress checkpoints; normal pause/exit also saves immediately. */
+    if (!g_lastCheckpoint || now - g_lastCheckpoint >= 5000) {
+        for (j = g_jobs; j; j = j->next)
+            if (j->state == ST_DOWNLOADING) SaveMeta(j);
+        EnginePersist();
+        g_lastCheckpoint = now;
+    }
 
     if (active < g_maxActive) {
         for (j = g_jobs; j && active < g_maxActive; j = j->next) {

@@ -57,7 +57,9 @@ async function probe(force) {
 
 async function bridgeAdd(url, meta) {
   if (!(await probe(false))) return false;
-  try {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    if (!SET.token && !(await acquireBridgeToken())) return false;
+    try {
     const body = JSON.stringify({
       url,
       referrer: meta.referrer || '',
@@ -73,9 +75,28 @@ async function bridgeAdd(url, meta) {
       },
       body, cache: 'no-store', signal: AbortSignal.timeout(5000)
     });
-    if (r.ok) { setBadge(''); return true; }
-    if (r.status === 403) setBadge('!');   /* token mismatch */
-    return false;
+      if (r.ok) { setBadge(''); return true; }
+      if (r.status === 403 && attempt === 0) {
+        SET.token = '';
+        continue;
+      }
+      if (r.status === 403) setBadge('!');
+      return false;
+    } catch (e) { return false; }
+  }
+  return false;
+}
+
+async function acquireBridgeToken() {
+  try {
+    const r = await fetch(`${bridgeBase()}/token`, {
+      method: 'GET', cache: 'no-store', signal: AbortSignal.timeout(2500)
+    });
+    if (!r.ok) return false;
+    const data = await r.json();
+    if (!data || typeof data.token !== 'string' || data.token.length < 16) return false;
+    SET.token = data.token;
+    return true;
   } catch (e) { return false; }
 }
 
@@ -128,7 +149,7 @@ if (chrome.downloads && chrome.downloads.onCreated) {
   chrome.downloads.onCreated.addListener(async (item) => {
     if (!SET.autoCapture) return;
     if (!item || !item.url || item.url.startsWith('grabstorm://')) return;
-    if (!/^(https?|ftp):/i.test(item.url)) return;
+    if (!/^https?:/i.test(item.url)) return;
     if (!isCapturable(item.finalUrl || item.url)) return;
     if (!(await probe(false))) return;
     let cookies = '';
@@ -138,12 +159,18 @@ if (chrome.downloads && chrome.downloads.onCreated) {
         cookies = jar.map(c => c.name + '=' + c.value).join('; ');
       }
     } catch (e) { /* optional */ }
+    /* Hand off first.  Never cancel the browser download unless the desktop
+       bridge accepted it; this prevents lost downloads on token mismatch. */
+    const handedOff = await bridgeAdd(item.finalUrl || item.url, {
+      referrer: item.referrer || '',
+      name: item.filename ? item.filename.split(/[\\/]/).pop() : '',
+      cookie: cookies,
+      size: item.totalBytes > 0 ? item.totalBytes : 0
+    });
+    if (!handedOff) return;
     chrome.downloads.cancel(item.id, () => {
-      if (chrome.runtime.lastError) { /* already finished */ }
-      capture(item.finalUrl || item.url, {
-        referrer: item.referrer || '', name: item.filename ? item.filename.split(/[\\/]/).pop() : '',
-        cookie: cookies, size: item.totalBytes > 0 ? item.totalBytes : 0
-      }, null);
+      if (chrome.runtime.lastError) return;
+      chrome.downloads.erase({ id: item.id }, () => void chrome.runtime.lastError);
     });
   });
 }
@@ -155,7 +182,7 @@ const tabMedia = new Map();  /* tabId -> [{url,size,mime}] */
 
 function rememberMedia(tabId, url, size, mime) {
   if (!tabId || tabId < 0) return;
-  if (!/^(https?|ftp):/i.test(url)) return;
+  if (!/^https?:/i.test(url)) return;
   const isMedia = /\.(mp4|m4v|mkv|webm|mov|avi|flv|ts|m2ts|mp3|m4a|flac|aac|ogg|wav)(\?|$)/i.test(url)
     || /^video\//i.test(mime || '') || /^audio\//i.test(mime || '');
   if (!isMedia) return;

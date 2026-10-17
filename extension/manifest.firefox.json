@@ -1,7 +1,7 @@
 {
   "manifest_version": 2,
   "name": "GrabStorm Integration",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "description": "Send downloads to GrabStorm — multi-segment acceleration, resume, queue and silent capture.",
   "browser_specific_settings": {
     "gecko": {

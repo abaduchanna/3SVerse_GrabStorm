@@ -1,11 +1,11 @@
-; GrabStorm v1.2.0 — 3SVerse multi-segment download accelerator for Windows
+; GrabStorm v1.3.0 — 3SVerse multi-segment download accelerator for Windows
 ; Per-user installer (no admin). Auto-installs the GrabStorm Integration
-; browser extension into every installed Chromium browser + Firefox via
-; per-user policies, registers the grabstorm:// protocol, and writes a
+; browser extension into current and future supported Chromium browsers +
+; Firefox via persistent per-user policies, registers the grabstorm:// protocol, and writes a
 ; diagnostic log to %LOCALAPPDATA%\3SVerse\GrabStorm\install.log
 
 #define AppName "GrabStorm"
-#define AppVer "1.2.0"
+#define AppVer "1.3.0"
 #define ExtId "ooclbgcgolihefahehfjjcmlfdlhncno"
 #define ExtUpdateUrl "https://abaduchanna.github.io/3SVerse_GrabStorm/update.xml"
 #define ExtSources "https://abaduchanna.github.io/*"
@@ -39,7 +39,7 @@ Name: "{userdesktop}\GrabStorm"; Filename: "{app}\GrabStorm.exe"; Tasks: desktop
 
 [Tasks]
 Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription: "Additional icons:"
-Name: "browserinteg"; Description: "Auto-install the GrabStorm browser extension (Chrome, Edge, Brave, Opera, Vivaldi, Yandex, Firefox)"; GroupDescription: "Browser integration:"; Flags: checkedonce
+Name: "browserinteg"; Description: "Auto-install GrabStorm Integration in current and future supported browsers"; GroupDescription: "Browser integration:"; Flags: checkedonce
 
 [Registry]
 Root: HKCU; Subkey: "Software\Classes\grabstorm"; ValueType: string; ValueData: "URL:GrabStorm Protocol"; Flags: uninsdeletekey
@@ -63,9 +63,9 @@ var
   LogFile: String;
   // Chromium policy roots + their executable names (filled by InitBrowserArrays;
   // Inno Pascal Script does not support Delphi-style array constants)
-  ChromiumRoots: array[0..5] of String;
-  BrowserNames: array[0..5] of String;
-  BrowserExes: array[0..5] of String;
+  ChromiumRoots: array[0..6] of String;
+  BrowserNames: array[0..6] of String;
+  BrowserExes: array[0..6] of String;
 
 procedure Sleep(ms: LongInt); external 'Sleep@kernel32.dll stdcall';
 
@@ -77,18 +77,21 @@ begin
   ChromiumRoots[3] := 'Vivaldi';
   ChromiumRoots[4] := 'Opera Software\Opera';
   ChromiumRoots[5] := 'Yandex\YandexBrowser';
+  ChromiumRoots[6] := 'Chromium';
   BrowserNames[0] := 'Google Chrome';
   BrowserNames[1] := 'Microsoft Edge';
   BrowserNames[2] := 'Brave';
   BrowserNames[3] := 'Vivaldi';
   BrowserNames[4] := 'Opera';
   BrowserNames[5] := 'Yandex';
+  BrowserNames[6] := 'Chromium';
   BrowserExes[0] := 'chrome.exe';
   BrowserExes[1] := 'msedge.exe';
   BrowserExes[2] := 'brave.exe';
   BrowserExes[3] := 'vivaldi.exe';
   BrowserExes[4] := 'opera.exe';
   BrowserExes[5] := 'yandex.exe';
+  BrowserExes[6] := 'chrome.exe';
 end;
 
 procedure LogLine(const S: String);
@@ -168,33 +171,39 @@ begin
   end;
 
   n := 0;
-  for i := 0 to 5 do
+  for i := 0 to 6 do
   begin
     b := DetectBrowser(i);
+    { Provision every supported policy root, even when the browser is not yet
+      installed. Chromium browsers read it on launch, so later installations
+      receive the extension automatically without rerunning GrabStorm Setup. }
+    WriteChromiumPolicy(ChromiumRoots[i]);
     if b <> '' then
     begin
-      WriteChromiumPolicy(ChromiumRoots[i]);
       LogLine('Detected ' + BrowserNames[i] + ' at ' + b);
-      LogLine('  wrote HKCU\Software\Policies\' + ChromiumRoots[i] + '\ExtensionInstallForcelist');
       n := n + 1;
     end
     else
-      LogLine('Not found: ' + BrowserNames[i]);
+      LogLine('Not currently installed: ' + BrowserNames[i] + ' (policy pre-provisioned for future install)');
+    LogLine('  wrote HKCU\Software\Policies\' + ChromiumRoots[i] + '\ExtensionInstallForcelist');
   end;
 
   ff := 0;
+  { Keep Firefox policy present even before Firefox is installed. }
+  RegWriteStringValue(HKEY_CURRENT_USER,
+    'Software\Policies\Mozilla\Firefox\Extensions\Install', '1', FfXpiUrlV);
   if DirHas(ExpandConstant('{pf}') + '\Mozilla Firefox', 'firefox.exe') or
      DirHas(ExpandConstant('{pf32}') + '\Mozilla Firefox', 'firefox.exe') or
      DirHas(ExpandConstant('{localappdata}') + '\Mozilla Firefox', 'firefox.exe') then
   begin
-    RegWriteStringValue(HKEY_CURRENT_USER,
-      'Software\Policies\Mozilla\Firefox\Extensions\Install', '1', FfXpiUrlV);
     LogLine('Detected Firefox - wrote Extensions\Install policy (ESR/Dev/Nightly only; release Firefox requires a signed add-on).');
     ff := 1;
-  end;
+  end
+  else
+    LogLine('Firefox not currently installed (policy pre-provisioned for future install).');
 
   LogLine('--- verification readback ---');
-  for i := 0 to 5 do
+  for i := 0 to 6 do
   begin
     if RegQueryStringValue(HKEY_CURRENT_USER,
         'Software\Policies\' + ChromiumRoots[i] + '\ExtensionInstallForcelist', '1', chk) then
@@ -203,7 +212,7 @@ begin
       LogLine('VERIFY ' + ChromiumRoots[i] + ': MISSING');
   end;
 
-  LogLine(IntToStr(n) + ' Chromium browser(s) integrated, Firefox=' + IntToStr(ff) + '.');
+  LogLine(IntToStr(n) + ' Chromium browser(s) detected; 7 Chromium policy roots and Firefox policy provisioned. Firefox detected=' + IntToStr(ff) + '.');
   LogLine('IMPORTANT: restart every browser once so the policy-installed extension loads.');
   LogLine('=== done ===');
 end;
@@ -218,7 +227,7 @@ begin
   LogFile := ExpandConstant('{localappdata}') + '\3SVerse\GrabStorm\install.log';
   ForceDirectories(ExtractFilePath(LogFile));
   LogLine('=== GrabStorm uninstall ' + GetDateTimeString('yyyy/mm/dd hh:nn:ss', '-', ':') + ' ===');
-  for i := 0 to 5 do
+  for i := 0 to 6 do
   begin
     if RegQueryStringValue(HKEY_CURRENT_USER,
         'Software\Policies\' + ChromiumRoots[i] + '\ExtensionInstallForcelist', '1', v) and
