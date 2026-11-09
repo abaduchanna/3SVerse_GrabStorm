@@ -48,7 +48,7 @@ which are shown in bytes (`KB`, `MB`, `GB`) — 8 bits = 1 byte.
 ## Install
 
 ### Setup (recommended)
-1. Download `GrabStorm_v1.3.0_Setup.exe` from the [releases page](https://github.com/abaduchanna/3SVerse_GrabStorm/releases).
+1. Download `GrabStorm_v1.2.0_Setup.exe` from the [releases page](https://github.com/abaduchanna/3SVerse_GrabStorm/releases).
 2. Run it — no admin rights needed (installs per-user).
 3. Keep **Auto-install GrabStorm Integration** checked; the installer writes
    persistent per-user policies for Chrome, Edge, Brave, Opera, Vivaldi,
