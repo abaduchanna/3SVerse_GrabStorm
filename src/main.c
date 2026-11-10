@@ -483,6 +483,74 @@ typedef struct {
     HFONT font;
 } BTNSTATE;
 
+/* STANDARD 3SVerse theme glyph (same geometry as the Tk / web apps):
+   sun (ring + 8 rays) while the dark theme is active, crescent moon while
+   the light theme is active. Drawn with GDI so it stays crisp and uses the
+   button text colour. */
+static void DrawThemeGlyph(HDC dc, int cx, int cy, int sun, COLORREF c)
+{
+    const double s = 0.8;            /* 30px-tall button: scale the 28px design */
+    const double PI = 3.14159265358979323846;
+    int i;
+    if (sun) {
+        double r = 6.0 * s;
+        HPEN p = CreatePen(PS_SOLID, 2, c);
+        HGDIOBJ op = SelectObject(dc, p);
+        HGDIOBJ ob = SelectObject(dc, GetStockObject(NULL_BRUSH));
+        Ellipse(dc, (int)(cx - r + 0.5), (int)(cy - r + 0.5),
+                    (int)(cx + r + 0.5), (int)(cy + r + 0.5));
+        for (i = 0; i < 8; i++) {
+            double a = i * PI / 4.0;
+            MoveToEx(dc, (int)(cx + cos(a) * (r + 2.5 * s) + 0.5),
+                         (int)(cy + sin(a) * (r + 2.5 * s) + 0.5), NULL);
+            LineTo(dc,   (int)(cx + cos(a) * (r + 6.5 * s) + 0.5),
+                         (int)(cy + sin(a) * (r + 6.5 * s) + 0.5));
+        }
+        SelectObject(dc, ob);
+        SelectObject(dc, op);
+        DeleteObject(p);
+    } else {
+        enum { STEPS = 36 };
+        POINT pts[3 * (STEPS + 1)];
+        double R = 8.0 * s, d = 5.5 * s;
+        double half = acos(d / (2.0 * R));
+        double sweep = 2.0 * PI - 2.0 * half;
+        double aEnd = atan2(R * sin(half), R * cos(half) - d);
+        double aStart = atan2(R * sin(-half), R * cos(-half) - d);
+        int n = 0;
+        HPEN p;
+        HBRUSH b;
+        HGDIOBJ op, ob;
+        for (i = 0; i <= STEPS; i++) {            /* outer arc */
+            double a = -half - sweep * i / STEPS;
+            pts[n].x = (LONG)(cx + R * cos(a) + 0.5);
+            pts[n].y = (LONG)(cy + R * sin(a) + 0.5);
+            n++;
+        }
+        for (i = 0; i <= STEPS; i++) {            /* inner cut, lower half */
+            double a = aEnd + (PI - aEnd) * i / STEPS;
+            pts[n].x = (LONG)(cx + d + R * cos(a) + 0.5);
+            pts[n].y = (LONG)(cy + R * sin(a) + 0.5);
+            n++;
+        }
+        for (i = 0; i <= STEPS; i++) {            /* inner cut, upper half */
+            double a = -PI + (aStart + PI) * i / STEPS;
+            pts[n].x = (LONG)(cx + d + R * cos(a) + 0.5);
+            pts[n].y = (LONG)(cy + R * sin(a) + 0.5);
+            n++;
+        }
+        p = CreatePen(PS_SOLID, 1, c);
+        b = CreateSolidBrush(c);
+        op = SelectObject(dc, p);
+        ob = SelectObject(dc, b);
+        Polygon(dc, pts, n);
+        SelectObject(dc, ob);
+        SelectObject(dc, op);
+        DeleteObject(b);
+        DeleteObject(p);
+    }
+}
+
 static void BtnPaint(HWND h, BTNSTATE *st)
 {
     PAINTSTRUCT ps;
@@ -538,6 +606,11 @@ static void BtnPaint(HWND h, BTNSTATE *st)
     SetBkMode(dc, TRANSPARENT);
     SelectObject(dc, st->font ? st->font : g_hFont);
     SetTextColor(dc, txtc);
+    if (GetDlgCtrlID(h) == IDC_THEME) {
+        /* theme toggle: standard sun/crescent icon at the left, label after it */
+        DrawThemeGlyph(dc, r.left + 20, (r.top + r.bottom) / 2, g_dark, txtc);
+        rt.left += 32;
+    }
     DrawTextW(dc, t, -1, &rt, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
     EndPaint(h, &ps);
 }
