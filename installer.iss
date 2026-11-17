@@ -6,7 +6,7 @@
 
 #define AppName "GrabStorm"
 #define AppVer "1.3.0"
-#define ExtId "ooclbgcgolihefahehfjjcmlfdlhncno"
+#define ExtId "nihagllklnehadfphpoejpifbnfhdaea"
 #define ExtUpdateUrl "https://abaduchanna.github.io/3SVerse_GrabStorm/update.xml"
 #define ExtSources "https://abaduchanna.github.io/*"
 #define FfXpiUrl "https://abaduchanna.github.io/3SVerse_GrabStorm/GrabStorm.xpi"
