@@ -551,6 +551,70 @@ static void DrawThemeGlyph(HDC dc, int cx, int cy, int sun, COLORREF c)
     }
 }
 
+/* IDM-style toolbar glyphs: a small vector icon to the left of each
+   toolbar button's label, drawn with GDI (no icon resources needed). */
+enum { TGLYPH_PLUS, TGLYPH_PLAY, TGLYPH_SQUARE, TGLYPH_TRASH, TGLYPH_GEAR };
+
+static void DrawToolGlyph(HDC dc, int cx, int cy, int kind, COLORREF c)
+{
+    HPEN p = CreatePen(PS_SOLID, 2, c);
+    HBRUSH b = CreateSolidBrush(c);
+    HGDIOBJ op = SelectObject(dc, p);
+    HGDIOBJ ob = SelectObject(dc, GetStockObject(NULL_BRUSH));
+    const double s = 0.8;
+
+    switch (kind) {
+    case TGLYPH_PLUS: {
+        int r = (int)(7 * s);
+        MoveToEx(dc, cx - r, cy, NULL); LineTo(dc, cx + r, cy);
+        MoveToEx(dc, cx, cy - r, NULL); LineTo(dc, cx, cy + r);
+        break;
+    }
+    case TGLYPH_PLAY: {
+        int r = (int)(7 * s);
+        POINT tri[3] = {
+            { cx - r / 2, cy - r }, { cx - r / 2, cy + r }, { cx + r, cy }
+        };
+        SelectObject(dc, ob);
+        SelectObject(dc, b);
+        Polygon(dc, tri, 3);
+        break;
+    }
+    case TGLYPH_SQUARE: {
+        int r = (int)(6 * s);
+        RECT sq = { cx - r, cy - r, cx + r, cy + r };
+        SelectObject(dc, ob);
+        FillRect(dc, &sq, b);
+        break;
+    }
+    case TGLYPH_TRASH: {
+        int hw = (int)(6 * s), top = cy - (int)(6 * s), bot = cy + (int)(6 * s);
+        MoveToEx(dc, cx - hw - 2, top, NULL); LineTo(dc, cx + hw + 2, top);     /* lid */
+        MoveToEx(dc, cx - 3, top - 4, NULL); LineTo(dc, cx + 3, top - 4);      /* handle */
+        MoveToEx(dc, cx - hw, top, NULL);                                      /* body L */
+        LineTo(dc, cx - hw + 1, bot); LineTo(dc, cx + hw - 1, bot);
+        LineTo(dc, cx + hw, top);
+        break;
+    }
+    case TGLYPH_GEAR: {
+        int i, r = (int)(5 * s);
+        const double PI = 3.14159265358979323846;
+        SelectObject(dc, ob);
+        Ellipse(dc, cx - r, cy - r, cx + r, cy + r);
+        for (i = 0; i < 6; i++) {
+            double a = i * PI / 3.0;
+            MoveToEx(dc, (int)(cx + cos(a) * (r + 1)), (int)(cy + sin(a) * (r + 1)), NULL);
+            LineTo(dc,   (int)(cx + cos(a) * (r + 4)), (int)(cy + sin(a) * (r + 4)));
+        }
+        break;
+    }
+    }
+    SelectObject(dc, ob);
+    SelectObject(dc, op);
+    DeleteObject(b);
+    DeleteObject(p);
+}
+
 static void BtnPaint(HWND h, BTNSTATE *st)
 {
     PAINTSTRUCT ps;
@@ -610,6 +674,22 @@ static void BtnPaint(HWND h, BTNSTATE *st)
         /* theme toggle: standard sun/crescent icon at the left, label after it */
         DrawThemeGlyph(dc, r.left + 20, (r.top + r.bottom) / 2, g_dark, txtc);
         rt.left += 32;
+    } else {
+        /* IDM-style toolbar: a small icon to the left of each button's label */
+        int glyph = -1;
+        switch (GetDlgCtrlID(h)) {
+        case IDC_ADD:      glyph = TGLYPH_PLUS;   break;
+        case IDC_START:    glyph = TGLYPH_PLAY;   break;
+        case IDC_STARTALL: glyph = TGLYPH_PLAY;   break;
+        case IDC_STOP:     glyph = TGLYPH_SQUARE; break;
+        case IDC_STOPALL:  glyph = TGLYPH_SQUARE; break;
+        case IDC_DEL:      glyph = TGLYPH_TRASH;  break;
+        case IDC_OPT:      glyph = TGLYPH_GEAR;   break;
+        }
+        if (glyph >= 0) {
+            DrawToolGlyph(dc, r.left + 18, (r.top + r.bottom) / 2, glyph, txtc);
+            rt.left += 24;
+        }
     }
     DrawTextW(dc, t, -1, &rt, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
     EndPaint(h, &ps);
@@ -1530,22 +1610,22 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
                         24, 158, 150, 40, hwnd, (HMENU)IDC_ADD, h, (LPVOID)(INT_PTR)BSTYLE_PRIMARY);
         g_hStart    = CreateWindowW(BTN_CLASSW, L"Start",
                         WS_CHILD | WS_VISIBLE | WS_TABSTOP,
-                        182, 158, 84, 40, hwnd, (HMENU)IDC_START, h, (LPVOID)(INT_PTR)BSTYLE_GHOST);
+                        182, 158, 92, 40, hwnd, (HMENU)IDC_START, h, (LPVOID)(INT_PTR)BSTYLE_GHOST);
         g_hStartAll = CreateWindowW(BTN_CLASSW, L"Start all",
                         WS_CHILD | WS_VISIBLE | WS_TABSTOP,
-                        274, 158, 84, 40, hwnd, (HMENU)IDC_STARTALL, h, (LPVOID)(INT_PTR)BSTYLE_GHOST);
+                        282, 158, 92, 40, hwnd, (HMENU)IDC_STARTALL, h, (LPVOID)(INT_PTR)BSTYLE_GHOST);
         g_hStop     = CreateWindowW(BTN_CLASSW, L"Stop",
                         WS_CHILD | WS_VISIBLE | WS_TABSTOP,
-                        366, 158, 74, 40, hwnd, (HMENU)IDC_STOP, h, (LPVOID)(INT_PTR)BSTYLE_GHOST);
+                        382, 158, 82, 40, hwnd, (HMENU)IDC_STOP, h, (LPVOID)(INT_PTR)BSTYLE_GHOST);
         g_hStopAll  = CreateWindowW(BTN_CLASSW, L"Stop all",
                         WS_CHILD | WS_VISIBLE | WS_TABSTOP,
-                        448, 158, 84, 40, hwnd, (HMENU)IDC_STOPALL, h, (LPVOID)(INT_PTR)BSTYLE_GHOST);
+                        472, 158, 92, 40, hwnd, (HMENU)IDC_STOPALL, h, (LPVOID)(INT_PTR)BSTYLE_GHOST);
         g_hDel      = CreateWindowW(BTN_CLASSW, L"Delete",
                         WS_CHILD | WS_VISIBLE | WS_TABSTOP,
-                        540, 158, 84, 40, hwnd, (HMENU)IDC_DEL, h, (LPVOID)(INT_PTR)BSTYLE_GHOST);
+                        572, 158, 92, 40, hwnd, (HMENU)IDC_DEL, h, (LPVOID)(INT_PTR)BSTYLE_GHOST);
         g_hOpt      = CreateWindowW(BTN_CLASSW, L"Options",
                         WS_CHILD | WS_VISIBLE | WS_TABSTOP,
-                        632, 158, 84, 40, hwnd, (HMENU)IDC_OPT, h, (LPVOID)(INT_PTR)BSTYLE_GHOST);
+                        672, 158, 92, 40, hwnd, (HMENU)IDC_OPT, h, (LPVOID)(INT_PTR)BSTYLE_GHOST);
         g_hTheme    = CreateWindowW(BTN_CLASSW, g_dark ? L"Light mode" : L"Dark mode",
                         WS_CHILD | WS_VISIBLE | WS_TABSTOP,
                         638, 14, 118, 30, hwnd, (HMENU)IDC_THEME, h, (LPVOID)(INT_PTR)BSTYLE_TOGGLE);
