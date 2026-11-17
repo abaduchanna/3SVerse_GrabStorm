@@ -84,18 +84,48 @@
     return '';
   }
 
+  const DL_SVG =
+    '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" ' +
+    'style="flex:none"><path d="M12 3v12m0 0l-5-5m5 5l5-5M4 19h16" ' +
+    'stroke="#07060b" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+
+  /* IDM-style: a small round badge sits top-right of the video, invisible
+   * until the video (or the badge itself) is hovered, then it expands
+   * into the GrabStorm label. */
   function makePill(vid) {
     const pill = document.createElement('div');
-    pill.textContent = 'GrabStorm';
     pill.setAttribute('data-gs-pill', '1');
+    pill.innerHTML = DL_SVG + '<span data-gs-label></span>';
     pill.style.cssText =
       'position:fixed;z-index:2147483646;display:inline-flex;align-items:center;gap:6px;' +
-      'margin:6px;padding:5px 12px;border-radius:999px;cursor:pointer;' +
+      'padding:7px;border-radius:999px;cursor:pointer;opacity:0;pointer-events:none;' +
+      'transition:opacity .15s ease,padding .15s ease;' +
       'background:linear-gradient(90deg,#6ee7ef,#e44bd7);color:#07060b;' +
       'font:600 11px/1.4 -apple-system,Segoe UI,Roboto,Arial,sans-serif;' +
       'letter-spacing:.06em;border:1px solid rgba(255,255,255,.25);box-shadow:0 4px 14px rgba(0,0,0,.35);';
-    pill.addEventListener('mouseenter', () => { pill.style.filter = 'brightness(1.08)'; });
-    pill.addEventListener('mouseleave', () => { pill.style.filter = ''; });
+    const label = pill.querySelector('[data-gs-label]');
+    label.style.cssText = 'max-width:0;overflow:hidden;white-space:nowrap;transition:max-width .15s ease;';
+    label.textContent = 'GrabStorm';
+
+    const show = () => {
+      pill.style.opacity = '1';
+      pill.style.pointerEvents = 'auto';
+      pill.style.padding = '7px 12px 7px 9px';
+      label.style.maxWidth = '120px';
+    };
+    const hide = () => {
+      if (pill._hovered) return;
+      pill.style.opacity = '0';
+      pill.style.pointerEvents = 'none';
+      pill.style.padding = '7px';
+      label.style.maxWidth = '0';
+    };
+    pill._hovered = false;
+    pill.addEventListener('mouseenter', () => { pill._hovered = true; pill.style.filter = 'brightness(1.08)'; show(); });
+    pill.addEventListener('mouseleave', () => { pill._hovered = false; pill.style.filter = ''; hide(); });
+    pill._show = show;
+    pill._hide = hide;
+
     pill.addEventListener('click', (e) => {
       e.preventDefault();
       e.stopPropagation();
@@ -105,8 +135,8 @@
         const list = (rep && rep.list) || [];
         const cand = (url && MEDIA_RE.test(url)) ? url : (list[0] && list[0].url) || url;
         if (cand) send({ type: 'gs-launch', url: cand, referrer: location.href, size: (list[0] && list[0].size) || 0 });
-        pill.textContent = cand ? 'Sent to GrabStorm' : 'No media found';
-        setTimeout(() => { pill.textContent = 'GrabStorm'; }, 1600);
+        label.textContent = cand ? 'Sent to GrabStorm' : 'No media found';
+        setTimeout(() => { label.textContent = 'GrabStorm'; }, 1600);
       });
     }, true);
     document.documentElement.appendChild(pill);
@@ -118,13 +148,24 @@
   function positionPill(pill, vid) {
     try {
       const r = vid.getBoundingClientRect();
-      if (r.width < 60 || r.height < 40) { pill.style.display = 'none'; return; }
+      if (r.width < 60 || r.height < 40) { pill._hidden = true; pill.style.display = 'none'; return; }
+      pill._hidden = false;
       pill.style.display = 'inline-flex';
-      const x = Math.min(Math.max(r.right - 130, 8), window.innerWidth - 140);
-      const y = Math.min(Math.max(r.bottom - 34, 8), window.innerHeight - 40);
+      /* IDM-style placement: top-right corner of the video. */
+      const x = Math.min(Math.max(r.right - 44, 8), window.innerWidth - 44);
+      const y = Math.min(Math.max(r.top + 8, 8), window.innerHeight - 40);
       pill.style.left = x + 'px';
       pill.style.top = y + 'px';
     } catch (err) { /* detached */ }
+  }
+
+  /* reveal the badge only while the cursor is over the video (or the
+   * badge itself, handled by the pill's own mouseenter/mouseleave) */
+  function wireHover(vid, pill) {
+    if (vid._gsHoverWired) return;
+    vid._gsHoverWired = true;
+    vid.addEventListener('mouseenter', () => { if (!pill._hidden) pill._show(); }, true);
+    vid.addEventListener('mouseleave', () => { pill._hide(); }, true);
   }
 
   function removeAllPills() {
@@ -150,6 +191,7 @@
         if (!pill) pill = makePill(vid);
         pill._vid = vid;
         positionPill(pill, vid);
+        wireHover(vid, pill);
       });
     } finally {
       scanning = false;
